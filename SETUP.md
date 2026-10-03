@@ -309,6 +309,19 @@ cd claimpilot-web && npm test
 npm run lint                      # in either app
 ```
 
+## 7b. Evals (needs a model key and MongoDB)
+
+Evals run the real agents, so they use the model quota: about 5 calls per case, 19 cases, paced at
+`MODEL_REQUESTS_PER_MINUTE`, so roughly 10 minutes per pass on the Gemini free tier (don't run two at once; each
+process paces itself). Results appear under **Evaluations** (Reviewer role) in the web app.
+
+```bash
+cd claimpilot-api
+npm run eval                        # once per case; --repeat 3 for flakiness, --judge for explanation scores
+npm run eval -- --update-baseline   # accept the run as the new baseline
+npm run eval:export-reviews         # resolved reviews → evals/cases/reviewed/*.json
+```
+
 ## 8. Troubleshooting
 
 | Symptom | Cause | Fix |

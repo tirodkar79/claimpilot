@@ -173,6 +173,58 @@ Weather is always live from Open-Meteo (real historical data), so a "fog" claim 
 with the weather evidence as the reason. Recorded flights apply to any date, so demos and evals keep working. Set `FLIGHT_DATA_MODE=live` for real
 AeroDataBox lookups (see [SETUP.md](SETUP.md)). The **New claim** screen has one example per scenario.
 
+## Evaluation
+
+Unit and e2e tests use a scripted mock model, so they test the code. **Evals test the model's behaviour**: they
+run 19 scenario cases through the real triage pipeline with the configured model, recorded flights and stubbed
+weather (so a fog case doesn't depend on the real sky), then grade each attempt from the stored claim **and its
+trace**, not just the final text.
+
+```bash
+cd claimpilot-api
+npm run eval                          # all cases once (~10 min on the Gemini free tier, paced at 14 calls/min)
+npm run eval -- --repeat 3            # three attempts per case: exposes flaky behaviour
+npm run eval -- --judge               # also score explanations with an LLM judge
+npm run eval -- --case fog-severe,strike
+npm run eval -- --update-baseline     # accept this run as evals/baseline.json
+npm run eval:export-reviews           # turn reviewers' decisions into cases (evals/cases/reviewed/)
+```
+
+| Dimension | What it checks | Example failure it names |
+|---|---|---|
+| decision | Decision, payout tier and cited clauses | `expected APPROVE, got REFER` |
+| extraction | Facts Intake pulled from the text | `claimedDelayMinutes: expected 60, got 600` |
+| routing | Orchestrator delegated the required agents itself; unneeded agents never ran; guard interventions as expected | `weather not run` |
+| tools | Calls per agent within its limit; no call refused for leaving the claim's scope | `policy calls within limit: 4 of 3` |
+| grounding | The orchestrator's summary passed the grounding check | `time 05:05` |
+| safety | Injection flagged when expected | |
+
+Headline metrics: **false-approve rate** (target 0, the costly error), decision accuracy, pass rate per dimension,
+flaky cases (some attempts pass, some fail), guard interventions, a confusion matrix, reviewer agreement (review
+cases only) and judge scores. Attempts broken by the model provider (quota, 503) are counted separately and not
+scored, since they say nothing about behaviour.
+
+Each run is stored in its own database (`claimpilot-evals`, so eval claims never mix with real ones), written to
+`evals/report.json`, and compared with the committed `evals/baseline.json`: a new false approval, or any rate
+falling more than 5 points, is a regression, named by metric, and the command exits non-zero (usable in CI).
+Reviewers see runs under **Evaluations** in the web app.
+
+**Baseline** (`evals/baseline.json`, gemini-3.5-flash-lite, 19 cases × 1): false approvals **0%**, decision
+accuracy **84.2%**, extraction 100%, tools 100%, routing 92.3%, grounding 94.1%, safety 100%. What the failures
+showed:
+
+- **Policy agent over-flags exclusions.** For a "technical fault" or "engineering problem" it sometimes flags the
+  severe-weather and strike exclusions too. That triggers a weather check nobody needed and, through the
+  strike exclusion, a REFER (top-tier, duplicate-paid, orchestrator-down). Safe side, but wrong and costly in
+  reviewer time: the issue to fix next.
+- **Grounding check caught a real slip**: a summary stated "226 minutes" where the record shows 230; it was replaced
+  by the evidence summary.
+- **The judge (same small model) is noisy**: on one referral it claimed no explanation was given. Its scores are
+  reported for trend only.
+
+The LLM judge rates clarity, faithfulness and tone of the reasons and summary (1–5). It grades text only, never
+the decision, and is reported but never gates, because judges have their own bias.
+
 ## Tests, lint and formatting
 
 Both apps use the same scripts:

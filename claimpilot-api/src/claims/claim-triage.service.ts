@@ -135,7 +135,7 @@ export class ClaimTriageService {
             return facts;
         } catch (error) {
             this.logError('Intake', claim, error);
-            await recorder.record('intake', 'agent.failed', 'Intake agent failed');
+            await recorder.record('intake', 'agent.failed', 'Intake agent failed', failureData(error));
             return null;
         }
     }
@@ -174,7 +174,12 @@ export class ClaimTriageService {
             });
         } catch (error) {
             this.logError('Orchestrator', claim, error);
-            await recorder.record('orchestrator', 'agent.failed', 'Orchestrator failed; running required checks');
+            await recorder.record(
+                'orchestrator',
+                'agent.failed',
+                'Orchestrator failed; running required checks',
+                failureData(error),
+            );
         }
 
         // Guard: required agents run even if the orchestrator skipped them or failed.
@@ -379,7 +384,7 @@ export class ClaimTriageService {
             } catch (error) {
                 this.logError(agent, run.claim, error);
                 delegation.failed = true;
-                await run.recorder.record(agent, 'agent.failed', `${agent} agent failed`);
+                await run.recorder.record(agent, 'agent.failed', `${agent} agent failed`, failureData(error));
             }
             return delegation.result;
         })();
@@ -457,4 +462,13 @@ export class ClaimTriageService {
             error instanceof Error ? error.stack : error,
         );
     }
+}
+
+/**
+ * Trace data for a failure: the first line of the error, enough to tell an outage from a bad answer.
+ * @param error What was thrown.
+ */
+function failureData(error: unknown): { data: { error: string } } {
+    const message = error instanceof Error ? error.message : String(error);
+    return { data: { error: message.split('\n')[0].slice(0, 200) } };
 }

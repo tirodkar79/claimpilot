@@ -6,6 +6,7 @@ import { ClaimsModule } from './claims/claims.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { validateEnv } from './config/env.validation';
+import { EvalsModule } from './evals/evals.module';
 import { HealthModule } from './health/health.module';
 import { HttpClientModule } from './http-client/http-client.module';
 import { MongoModule } from './mongo/mongo.module';
@@ -22,6 +23,7 @@ import { ReviewsModule } from './reviews/reviews.module';
         HealthModule,
         ClaimsModule,
         ReviewsModule,
+        EvalsModule,
     ],
     providers: [
         { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },

@@ -1,0 +1,51 @@
+{
+    "attempts": 19,
+    "erroredAttempts": 0,
+    "cases": 19,
+    "decisionAccuracy": 0.8421052631578947,
+    "falseApproveRate": 0,
+    "dimensionPassRates": {
+        "decision": 0.8387096774193549,
+        "extraction": 1,
+        "routing": 0.9230769230769231,
+        "tools": 1,
+        "grounding": 0.9411764705882353,
+        "safety": 1
+    },
+    "consistentCases": 14,
+    "flakyCases": 0,
+    "guardInterventions": 5,
+    "confusion": {
+        "APPROVE": {
+            "APPROVE": 5,
+            "REJECT": 0,
+            "REFER": 2,
+            "NEED_INFO": 0
+        },
+        "REJECT": {
+            "APPROVE": 0,
+            "REJECT": 3,
+            "REFER": 1,
+            "NEED_INFO": 0
+        },
+        "REFER": {
+            "APPROVE": 0,
+            "REJECT": 0,
+            "REFER": 6,
+            "NEED_INFO": 0
+        },
+        "NEED_INFO": {
+            "APPROVE": 0,
+            "REJECT": 0,
+            "REFER": 0,
+            "NEED_INFO": 2
+        }
+    },
+    "averageDurationMs": 32366,
+    "reviewerAgreement": null,
+    "judge": {
+        "clarity": 3,
+        "faithfulness": 2.9,
+        "tone": 3.3
+    }
+}

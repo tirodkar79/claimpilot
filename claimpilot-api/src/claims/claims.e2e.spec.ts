@@ -7,6 +7,8 @@ import request from 'supertest';
 import { LANGUAGE_MODEL } from '../agents/language-model.provider';
 import { mockLanguageModel, type MockCall, type MockStep } from '../agents/testing/mock-language-model';
 import { OpenMeteoMcpService } from '../weather/open-meteo-mcp.service';
+import { EvalRunsRepository } from '../evals/eval-runs.repository';
+import type { EvalCaseResult, EvalMetrics } from '../evals/evals.constants';
 import { Claim } from './claim.schema';
 import type { HourlyWeather } from '../weather/severe-weather';
 
@@ -433,6 +435,39 @@ describe('Claims API', () => {
             .send(body)
             .expect(400);
         expect(res.body.error.message).toBe('Unknown failure target(s): database');
+    });
+
+    it('lists eval runs for reviewers, newest first, without per-case detail', async () => {
+        const runs = app.get(EvalRunsRepository);
+        const metrics = { decisionAccuracy: 0.9 } as EvalMetrics;
+        const run = (startedAt: string) => ({
+            startedAt: new Date(startedAt),
+            finishedAt: new Date(startedAt),
+            model: 'google:gemini-3.5-flash-lite',
+            repeats: 1,
+            judged: false,
+            metrics,
+            regressions: [],
+            comparedWithBaseline: true,
+            cases: [{ id: 'evidenced-tier' } as EvalCaseResult],
+        });
+        await runs.create(run('2026-10-01T10:00:00Z'));
+        const latest = await runs.create(run('2026-10-02T10:00:00Z'));
+
+        await request(app.getHttpServer()).get('/evals/runs').set(CLAIMANT).expect(403);
+        const list = await request(app.getHttpServer()).get('/evals/runs').set(REVIEWER).expect(200);
+        expect(list.body.map((r: { startedAt: string }) => r.startedAt)).toEqual([
+            '2026-10-02T10:00:00.000Z',
+            '2026-10-01T10:00:00.000Z',
+        ]);
+        expect(list.body[0].cases).toBeUndefined();
+
+        const detail = await request(app.getHttpServer())
+            .get(`/evals/runs/${String(latest._id)}`)
+            .set(REVIEWER)
+            .expect(200);
+        expect(detail.body).toMatchObject({ id: String(latest._id), cases: [{ id: 'evidenced-tier' }] });
+        await request(app.getHttpServer()).get('/evals/runs/not-an-id').set(REVIEWER).expect(404);
     });
 
     it('returns 404 for unknown or malformed claim ids', async () => {
