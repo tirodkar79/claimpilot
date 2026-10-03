@@ -1,8 +1,8 @@
 # ClaimPilot
 
 Multi-agent triage for flight-delay insurance claims. An orchestrating agent delegates to specialised
-sub-agents (policy, flight evidence, weather via an external MCP server, integrity), and a deterministic rules
-engine decides the outcome: **APPROVE / REJECT / REFER / NEED_INFO**.
+sub-agents (policy, flight evidence, weather via the external **Open-Meteo MCP server**, integrity next), and a
+deterministic rules engine decides the outcome: **APPROVE / REJECT / REFER / NEED_INFO**.
 
 > Work in progress. This README grows phase by phase.
 
@@ -63,10 +63,12 @@ See **[SETUP.md](SETUP.md)** for getting API keys, free-tier limits and which pr
 ## How a claim flows (so far)
 
 ```
-POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► Policy agent ─┬─► guard ─► rules engine
-                (raw text,  (missing →      (LLM; only     └─► Flight agent ─┘   (runs      (decides from
-                 no tools)   NEED_INFO)      delegation                          skipped     evidence; cites
-                                             tools)                              agents)     clauses)
+POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► Policy agent ──┬─► guard ─► rules engine
+                (raw text,  (missing →      (LLM; only     ├─► Flight agent ──┤   (runs      (decides from
+                 no tools)   NEED_INFO)      delegation     └─► Weather agent ─┘   skipped,   evidence; cites
+                                             tools)             (only if a weather   blocks     clauses)
+                                                                exclusion matters;   unneeded)
+                                                                Open-Meteo MCP)
 ```
 
 1. `POST /claims` (claimant role) stores the claim and returns `202` straight away.
@@ -81,9 +83,14 @@ POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► 
 6. The **Flight agent** looks the flight up through a tool bound to the claimed flight number and to dates
    within a day of the claimed date (≤ 2 lookups). It picks the leg matching the claimed route; code accepts
    the pick only if that leg was really returned, and computes the delay itself.
-7. A **guard** runs any required agent the orchestrator skipped or that failed to start, so a model mistake
-   can't skip a check. Evals will count how often it stepped in.
-8. The **rules engine** (`adjudicate`, plain code) decides, first failing check wins:
+7. The **Weather agent** runs only when the Policy agent flagged a severe-weather exclusion *and* the recorded
+   delay reaches a payout tier (otherwise weather can't change the outcome). It calls the external
+   **Open-Meteo MCP server** (`weather_archive`, started over stdio) for both airports. Its tool only accepts the
+   flight's two airports; code computes "severe or not" from the hourly WMO weather codes and gusts, and
+   fetches any window the agent skipped.
+8. A **guard** runs any required agent the orchestrator skipped or that failed, and blocks a weather check
+   that can't matter, so a model mistake can't skip a check or waste quota. Evals will count its interventions.
+9. The **rules engine** (`adjudicate`, plain code) decides, first failing check wins:
 
    | Check | Outcome |
    |---|---|
@@ -93,11 +100,13 @@ POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► 
    | No flight record | NEED_INFO (confirm number and date) |
    | Cancelled, or no actual time yet | REFER |
    | Delay (measured the policy's way) below every tier | REJECT (cites measure and tiers) |
-   | Weather or strike exclusion could apply | REFER until the weather phase |
+   | Weather exclusion flagged + weather records show severe weather | REJECT (cites clause and observation) |
+   | Weather exclusion flagged + no weather records | REFER |
+   | Strike exclusion flagged (no evidence source yet) | REFER |
    | Otherwise | **APPROVE** the tier the record reaches, which may be lower than claimed |
 
    Any agent failure → REFER to a human.
-9. Every step is a trace event. `GET /claims/:id/events` streams them; `GET /claims/:id` returns facts,
+10. Every step is a trace event. `GET /claims/:id/events` streams them; `GET /claims/:id` returns facts,
    evidence, the outcome with cited clauses and payout, and the orchestrator's summary.
 
 ### Demo data (fictional)
@@ -118,7 +127,8 @@ POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► 
 | SG160 | BOM → DEL | Cancelled |
 | 6E2314 | — | No record (typo of 6E2134) |
 
-Recorded flights apply to any date, so demos and evals keep working. Set `FLIGHT_DATA_MODE=live` for real
+Weather is always live from Open-Meteo (real historical data), so a "fog" claim on a clear day is approved
+with the weather evidence as the reason. Recorded flights apply to any date, so demos and evals keep working. Set `FLIGHT_DATA_MODE=live` for real
 AeroDataBox lookups (see [SETUP.md](SETUP.md)). The **New claim** screen has one example per scenario.
 
 ## Tests, lint and formatting

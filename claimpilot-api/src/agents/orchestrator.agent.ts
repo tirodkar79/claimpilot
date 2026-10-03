@@ -21,6 +21,12 @@ export interface OrchestratorDelegates {
      * @param focus What the orchestrator wants to know.
      */
     consultFlight(focus: string): Promise<Record<string, unknown>>;
+
+    /**
+     * Runs the Weather agent (via the Open-Meteo MCP server) and returns a short briefing.
+     * @param focus What the orchestrator wants to know.
+     */
+    consultWeather(focus: string): Promise<Record<string, unknown>>;
 }
 
 const INSTRUCTIONS = `You coordinate the triage of a flight-delay insurance claim.
@@ -28,12 +34,16 @@ const INSTRUCTIONS = `You coordinate the triage of a flight-delay insurance clai
 You receive the claim facts, never the claimant's raw message. Delegate to specialist agents through tools:
 - consultPolicyAgent: reads the policy wording (cover, how delay is measured, exclusions).
 - consultFlightAgent: finds what actually happened to the flight (scheduled and actual times).
+- consultWeatherAgent: checks historical weather at both airports during the delay.
 
 Rules:
-- Consult both agents once for every claim before answering; you can call them in the same step.
+- Consult the Policy and Flight agents once for every claim; you can call them in the same step.
+- Consult the Weather agent only if the Policy agent flagged a severe-weather exclusion. Otherwise don't:
+  it costs time and can't change the outcome.
 - You do not approve, reject or calculate payouts; a rules engine does that from the evidence.
 - Finish with two or three plain sentences for a claims reviewer: what was checked and what was found,
-  including any exclusions the Policy agent flagged and whether the flight record was found.`;
+  including any exclusions the Policy agent flagged, whether the flight record was found, and the weather
+  if it was checked.`;
 
 /**
  * LLM orchestrator: decides which sub-agents to call and summarises what they found. It has no data
@@ -72,10 +82,17 @@ export class OrchestratorAgent {
                     (focus) => delegates.consultFlight(focus),
                     recorder,
                 ),
+                consultWeatherAgent: delegationTool(
+                    'consultWeatherAgent',
+                    'weather',
+                    'Ask the Weather agent about severe weather at the airports. Only for a weather exclusion.',
+                    (focus) => delegates.consultWeather(focus),
+                    recorder,
+                ),
             },
         });
         // Plain text is enough for a summary, so no structured-output call is spent here.
-        const result = await agent.generate(`Claim facts: ${JSON.stringify(facts)}`, { maxSteps: 3 });
+        const result = await agent.generate(`Claim facts: ${JSON.stringify(facts)}`, { maxSteps: 4 });
         const summary = result.text.trim();
         if (!summary) throw new Error('Orchestrator returned an empty summary');
         return summary;

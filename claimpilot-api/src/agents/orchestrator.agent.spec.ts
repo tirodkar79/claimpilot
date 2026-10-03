@@ -30,7 +30,7 @@ describe('OrchestratorAgent', () => {
 
         const summary = await new OrchestratorAgent(model).run(
             facts,
-            { consultPolicy, consultFlight: jest.fn() },
+            { consultPolicy, consultFlight: jest.fn(), consultWeather: jest.fn() },
             recorder,
         );
 
@@ -44,7 +44,7 @@ describe('OrchestratorAgent', () => {
         await expect(
             new OrchestratorAgent(model).run(
                 facts,
-                { consultPolicy: jest.fn(), consultFlight: jest.fn() },
+                { consultPolicy: jest.fn(), consultFlight: jest.fn(), consultWeather: jest.fn() },
                 { record: jest.fn() },
             ),
         ).rejects.toThrow('empty summary');
@@ -58,9 +58,9 @@ describe('OrchestratorAgent', () => {
         });
         await new OrchestratorAgent(model).run(
             facts,
-            { consultPolicy: jest.fn(), consultFlight: jest.fn() },
+            { consultPolicy: jest.fn(), consultFlight: jest.fn(), consultWeather: jest.fn() },
             { record: jest.fn() },
         );
-        expect([...offered].sort()).toEqual(['consultFlightAgent', 'consultPolicyAgent']);
+        expect([...offered].sort()).toEqual(['consultFlightAgent', 'consultPolicyAgent', 'consultWeatherAgent']);
     });
 });

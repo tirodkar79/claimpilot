@@ -49,6 +49,32 @@ export interface FlightFindings {
     lookups: { date: string; legs: number }[];
 }
 
+export interface WeatherObservation {
+    time: string;
+    weatherCode: number | null;
+    condition: string;
+    gustKmh: number | null;
+    precipitationMm: number | null;
+    severe: boolean;
+}
+
+/** Weather agent result (claimpilot-api/src/agents/weather.agent.ts); severity is computed by code. */
+export interface WeatherFindings {
+    source: 'open-meteo-mcp';
+    severe: boolean;
+    checks: {
+        airport: string;
+        role: 'departure' | 'arrival';
+        windowStart: string;
+        windowEnd: string;
+        severe: boolean;
+        severeObservations: WeatherObservation[];
+        observationCount: number;
+    }[];
+    notes: string;
+    guardFetched: string[];
+}
+
 export interface PolicyClause {
     id: string;
     title: string;
@@ -75,7 +101,7 @@ export interface Claim {
     status: ClaimStatus;
     facts?: ClaimFacts;
     outcome?: ClaimOutcome;
-    evidence?: { policy?: PolicyFindings; flight?: FlightFindings };
+    evidence?: { policy?: PolicyFindings; flight?: FlightFindings; weather?: WeatherFindings };
     /** Orchestrator's summary for the reviewer; informational only. */
     summary?: string;
     createdAt: string;

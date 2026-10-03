@@ -4,8 +4,10 @@ import { FlightAgent, type FlightFindings } from '../agents/flight.agent';
 import { IntakeAgent } from '../agents/intake.agent';
 import { OrchestratorAgent, type OrchestratorDelegates } from '../agents/orchestrator.agent';
 import { PolicyAgent, type PolicyFindings } from '../agents/policy.agent';
+import { WeatherAgent, type WeatherFindings } from '../agents/weather.agent';
 import { localDate, localDateTime } from '../common/utils/local-date';
 import { EnvConfig } from '../config/env.validation';
+import { computeDelay } from '../flights/flight-delay';
 import { PoliciesRepository } from '../policies/policies.repository';
 import type { Policy } from '../policies/policy.schema';
 import type { TraceActor } from '../trace/trace.constants';
@@ -17,13 +19,20 @@ import type { ClaimOutcome } from './claims.constants';
 import { ClaimsRepository } from './claims.repository';
 
 const INTAKE_FAILED_REASON = 'We could not read the claim automatically, so a person will review it.';
-const AGENT_FAILED_REASON: Record<'policy' | 'flight', string> = {
+type SubAgent = Extract<TraceActor, 'policy' | 'flight' | 'weather'>;
+
+const AGENT_FAILED_REASON: Record<SubAgent, string> = {
     policy: 'We could not check the policy automatically, so a person will review it.',
     flight: 'We could not check the flight record automatically, so a person will review it.',
+    weather: 'We could not check the weather records automatically, so a person will review it.',
 };
 
-/** One sub-agent's result within a run: filled once, then reused by repeat delegations. */
+/**
+ * One sub-agent's result within a run. The in-flight promise is shared, so concurrent delegations (the
+ * orchestrator calling the same agent twice in one step) run the agent once.
+ */
 interface Delegation<T> {
+    pending?: Promise<T | undefined>;
     result?: T;
     failed: boolean;
 }
@@ -36,13 +45,15 @@ interface RunContext {
     recorder: TraceRecorder;
     policyEvidence: Delegation<PolicyFindings>;
     flightEvidence: Delegation<FlightFindings>;
+    weatherEvidence: Delegation<WeatherFindings>;
 }
 
 /**
  * Runs a claim's triage and records every step in the trace.
  *
  * Intake (code-invoked, quarantined) → completeness check → LLM orchestrator, which delegates to the
- * Policy and Flight agents → guard (runs required agents the orchestrator skipped) → rules engine decides.
+ * Policy and Flight agents, and to the Weather agent only when a weather exclusion could change the outcome →
+ * guard (runs required agents the orchestrator skipped, blocks unneeded ones) → rules engine decides.
  * Model output never decides the outcome; failures end in REFER rather than a guess.
  */
 @Injectable()
@@ -58,6 +69,7 @@ export class ClaimTriageService {
         private readonly orchestrator: OrchestratorAgent,
         private readonly policyAgent: PolicyAgent,
         private readonly flightAgent: FlightAgent,
+        private readonly weatherAgent: WeatherAgent,
         private readonly trace: TraceService,
     ) {
         this.timeZone = config.get('CLAIMANT_TIMEZONE', { infer: true });
@@ -130,10 +142,12 @@ export class ClaimTriageService {
             recorder,
             policyEvidence: { failed: false },
             flightEvidence: { failed: false },
+            weatherEvidence: { failed: false },
         };
         const delegates: OrchestratorDelegates = {
             consultPolicy: (focus) => this.consultPolicy(run, focus),
             consultFlight: (focus) => this.consultFlight(run, focus),
+            consultWeather: (focus) => this.consultWeather(run, focus),
         };
 
         await recorder.record('orchestrator', 'agent.started', 'Planning which agents to consult');
@@ -159,15 +173,27 @@ export class ClaimTriageService {
             await recorder.record('orchestrator', 'guard.enforced', 'Flight agent was not consulted; running it');
             await delegates.consultFlight('Required flight check');
         }
+        if (this.weatherNeeded(run) && !run.weatherEvidence.result && !run.weatherEvidence.failed) {
+            await recorder.record(
+                'orchestrator',
+                'guard.enforced',
+                'Weather exclusion flagged but weather not checked; running it',
+            );
+            await delegates.consultWeather('Required weather check');
+        }
 
         await this.claims.updateById(String(claim._id), {
-            evidence: { policy: run.policyEvidence.result, flight: run.flightEvidence.result },
+            evidence: {
+                policy: run.policyEvidence.result,
+                flight: run.flightEvidence.result,
+                weather: run.weatherEvidence.result,
+            },
             summary,
         });
-        for (const agent of ['policy', 'flight'] as const) {
-            if ((agent === 'policy' ? run.policyEvidence : run.flightEvidence).failed) {
+        const evidence = { policy: run.policyEvidence, flight: run.flightEvidence, weather: run.weatherEvidence };
+        for (const agent of ['policy', 'flight', 'weather'] as const) {
+            if (evidence[agent].failed)
                 return { decision: 'REFER', reasons: [AGENT_FAILED_REASON[agent]], citations: [] };
-            }
         }
         return adjudicate({
             facts,
@@ -177,7 +203,59 @@ export class ClaimTriageService {
             submittedOn: localDate(claim.createdAt, this.timeZone),
             policyFindings: run.policyEvidence.result,
             flight: run.flightEvidence.result,
+            weather: run.weatherEvidence.result,
         });
+    }
+
+    /**
+     * Whether the weather check can change the outcome: the policy flagged a severe-weather exclusion and the
+     * recorded delay reaches a payout tier (otherwise the claim is decided without it).
+     * @param run Current run.
+     */
+    private weatherNeeded(run: RunContext): boolean {
+        const { policy } = run;
+        const leg = run.flightEvidence.result?.leg;
+        const weatherExcluded = run.policyEvidence.result?.relevantExclusions.some((e) => e.type === 'severe_weather');
+        if (!policy || !leg || !weatherExcluded) return false;
+        const minutes = computeDelay(leg, policy.delayMeasure).minutes;
+        return minutes !== null && policy.payoutTiers.some((tier) => minutes >= tier.minDelayMinutes);
+    }
+
+    /**
+     * Delegation target: the Weather agent. Waits for the policy and flight evidence it depends on, and
+     * refuses (without spending a model call) when the check can't change the outcome.
+     * @param run Current run.
+     * @param focus What the orchestrator asked for.
+     */
+    private async consultWeather(run: RunContext, focus: string): Promise<Record<string, unknown>> {
+        await Promise.all([
+            this.consultPolicy(run, 'Needed for the weather check'),
+            this.consultFlight(run, 'Needed for the weather check'),
+        ]);
+        const leg = run.flightEvidence.result?.leg;
+        if (!this.weatherNeeded(run) || !leg) {
+            await run.recorder.record('orchestrator', 'guard.enforced', 'Weather check not needed; skipped', {
+                data: { blocked: 'weather', reason: 'no weather exclusion that could change the outcome' },
+            });
+            return {
+                skipped: true,
+                reason: 'No severe-weather exclusion applies to a payable delay, so weather is irrelevant.',
+            };
+        }
+        const findings = await this.runOnce('weather', run.weatherEvidence, run, focus, () =>
+            this.weatherAgent.check(leg, run.recorder),
+        );
+        if (!findings) return { error: 'The Weather agent is unavailable.' };
+        return {
+            severe: findings.severe,
+            checks: findings.checks.map((check) => ({
+                airport: check.airport,
+                role: check.role,
+                severe: check.severe,
+                conditions: [...new Set(check.severeObservations.map((o) => o.condition))],
+            })),
+            notes: findings.notes,
+        };
     }
 
     /**
@@ -232,8 +310,8 @@ export class ClaimTriageService {
     }
 
     /**
-     * Runs a sub-agent at most once per claim, tracing start, end or failure. Repeat delegations reuse
-     * the result; after a failure, later calls get undefined without retrying.
+     * Runs a sub-agent at most once per claim, tracing start, end or failure. Repeat or concurrent delegations
+     * share the same run; after a failure, later calls get undefined without retrying.
      * @param agent Sub-agent name.
      * @param delegation Its slot in the run context (mutated).
      * @param run Current run.
@@ -241,28 +319,29 @@ export class ClaimTriageService {
      * @param work Runs the sub-agent.
      */
     private async runOnce<T>(
-        agent: Extract<TraceActor, 'policy' | 'flight'>,
+        agent: SubAgent,
         delegation: Delegation<T>,
         run: RunContext,
         focus: string,
         work: () => Promise<T>,
     ): Promise<T | undefined> {
-        if (delegation.result || delegation.failed) return delegation.result;
-
-        await run.recorder.record(agent, 'agent.started', `${agent} agent started`, { data: { focus } });
-        const startedAt = Date.now();
-        try {
-            delegation.result = await work();
-            await run.recorder.record(agent, 'agent.completed', `${agent} agent finished`, {
-                data: { findings: delegation.result },
-                durationMs: Date.now() - startedAt,
-            });
-        } catch (error) {
-            this.logError(agent, run.claim, error);
-            delegation.failed = true;
-            await run.recorder.record(agent, 'agent.failed', `${agent} agent failed`);
-        }
-        return delegation.result;
+        delegation.pending ??= (async () => {
+            await run.recorder.record(agent, 'agent.started', `${agent} agent started`, { data: { focus } });
+            const startedAt = Date.now();
+            try {
+                delegation.result = await work();
+                await run.recorder.record(agent, 'agent.completed', `${agent} agent finished`, {
+                    data: { findings: delegation.result },
+                    durationMs: Date.now() - startedAt,
+                });
+            } catch (error) {
+                this.logError(agent, run.claim, error);
+                delegation.failed = true;
+                await run.recorder.record(agent, 'agent.failed', `${agent} agent failed`);
+            }
+            return delegation.result;
+        })();
+        return delegation.pending;
     }
 
     /**

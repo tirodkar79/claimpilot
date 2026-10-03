@@ -1,5 +1,7 @@
 import type { FlightFindings } from '../agents/flight.agent';
 import type { PolicyFindings } from '../agents/policy.agent';
+import type { WeatherFindings } from '../agents/weather.agent';
+import { localDateTime } from '../common/utils/local-date';
 import { computeDelay } from '../flights/flight-delay';
 import type { Policy } from '../policies/policy.schema';
 import type { ClaimFacts } from './claim-facts';
@@ -15,10 +17,12 @@ export interface AdjudicationInput {
     submittedOn: string;
     policyFindings?: PolicyFindings;
     flight?: FlightFindings;
+    /** Present when a weather exclusion was flagged and the delay qualified. */
+    weather?: WeatherFindings;
 }
 
-/** Exclusions that need weather or industrial-action evidence, which no agent checks yet. */
-const EXCLUSIONS_NEEDING_EVIDENCE = new Set(['severe_weather', 'industrial_action']);
+/** Exclusions that need evidence no agent gathers yet (industrial action). Weather is checked by the Weather agent. */
+const EXCLUSIONS_WITHOUT_EVIDENCE = new Set(['industrial_action']);
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -41,13 +45,15 @@ function duration(minutes: number): string {
  * 6. Flight cancelled → REFER (the policy has no cancellation benefit to apply).
  * 7. Actual time known → else REFER.
  * 8. Delay, measured the policy's way, reaches a payout tier → else REJECT (clauses: measure, tiers).
- * 9. No exclusion flagged that needs evidence we can't check yet → else REFER.
- * 10. APPROVE the tier the evidence reaches, which may be lower than the one claimed.
+ * 9. Severe-weather exclusion flagged → weather records show severe weather → REJECT (clause + observation);
+ *    no weather evidence → REFER; clear weather → the exclusion doesn't apply, continue.
+ * 10. Another exclusion flagged that needs evidence we can't gather (industrial action) → REFER.
+ * 11. APPROVE the tier the evidence reaches, which may be lower than the one claimed.
  *
  * @param input Facts, policy, evidence and claim metadata. `facts.flightDate` must be present.
  */
 export function adjudicate(input: AdjudicationInput): ClaimOutcome {
-    const { facts, policy, policyId, customerId, submittedOn, policyFindings, flight } = input;
+    const { facts, policy, policyId, customerId, submittedOn, policyFindings, flight, weather } = input;
     if (!policy) {
         return {
             decision: 'NEED_INFO',
@@ -141,25 +147,15 @@ export function adjudicate(input: AdjudicationInput): ClaimOutcome {
         };
     }
 
-    const pending = (policyFindings?.relevantExclusions ?? []).filter((e) => EXCLUSIONS_NEEDING_EVIDENCE.has(e.type));
-    if (pending.length) {
-        const clauses = pending.map((e) => '§' + e.clauseId).join(', ');
-        return {
-            decision: 'REFER',
-            reasons: [
-                `The ${measured} qualifies for ${tier.currency} ${tier.amount.toLocaleString('en-IN')}, but ` +
-                    `exclusion ${clauses} could apply and needs evidence that isn’t checked automatically yet.`,
-            ],
-            citations: cite(...pending.map((e) => e.clauseId)),
-            evidencedDelayMinutes: evidenced,
-        };
-    }
+    const exclusionStep = applyExclusions({ policyFindings, weather, flight, measured, tier, evidenced, cite });
+    if ('decision' in exclusionStep) return exclusionStep;
 
     return {
         decision: 'APPROVE',
         reasons: [
             `The flight record shows ${article} ${measured}, which meets the ${duration(tier.minDelayMinutes)} tier.`,
             ...claimedVersusEvidenced(facts, evidenced, policy),
+            ...exclusionStep.reasons,
         ],
         citations: cite(refs.delayMeasure, refs.payoutTiers),
         payout: { amount: tier.amount, currency: tier.currency, minDelayMinutes: tier.minDelayMinutes },
@@ -184,4 +180,85 @@ function claimedVersusEvidenced(facts: ClaimFacts, evidenced: number, policy: Po
     const changesTier = tierOf(claimed) !== tierOf(evidenced);
     if (!changesTier && Math.abs(claimed - evidenced) < NOTABLE_GAP_MINUTES) return [];
     return [`The claimant reported ${duration(claimed)}; the payout follows the flight record.`];
+}
+
+/**
+ * The first severe observation, in local time, e.g. "fog at DEL at 2026-09-24 18:00 Asia/Kolkata".
+ * @param weather Weather findings with at least one severe observation.
+ * @param leg Flight leg (for airport time zones).
+ */
+function describeSevere(weather: WeatherFindings, leg: NonNullable<FlightFindings['leg']>): string {
+    const check = weather.checks.find((c) => c.severe)!;
+    const observation = check.severeObservations[0];
+    const timeZone = check.role === 'departure' ? leg.origin.timeZone : leg.destination.timeZone;
+    const gust =
+        observation.gustKmh !== null && observation.gustKmh >= 60 ? ` (gusts ${observation.gustKmh} km/h)` : '';
+    return `${observation.condition}${gust} at ${check.airport} at ${localDateTime(observation.time, timeZone)}`;
+}
+
+interface ExclusionContext {
+    policyFindings?: PolicyFindings;
+    weather?: WeatherFindings;
+    flight: FlightFindings;
+    /** e.g. "departure delay of 3h 50m". */
+    measured: string;
+    tier: { amount: number; currency: string };
+    evidenced: number;
+    cite: (...clauseIds: string[]) => ClauseCitation[];
+}
+
+/**
+ * Steps 9–10: exclusions the Policy agent flagged. Returns an outcome when an exclusion decides the claim,
+ * otherwise extra reasons for the approval (e.g. why a weather exclusion doesn't apply).
+ * @param context Evidence and helpers from `adjudicate`.
+ */
+function applyExclusions(context: ExclusionContext): ClaimOutcome | { reasons: string[] } {
+    const { policyFindings, weather, flight, measured, tier, evidenced, cite } = context;
+    const exclusions = policyFindings?.relevantExclusions ?? [];
+    const amount = `${tier.currency} ${tier.amount.toLocaleString('en-IN')}`;
+    const reasons: string[] = [];
+
+    const weatherExclusions = exclusions.filter((e) => e.type === 'severe_weather');
+    if (weatherExclusions.length) {
+        const clauses = weatherExclusions.map((e) => '§' + e.clauseId).join(', ');
+        const citations = cite(...weatherExclusions.map((e) => e.clauseId));
+        if (!weather) {
+            return {
+                decision: 'REFER',
+                reasons: [`Exclusion ${clauses} could apply, but no weather records were available to check it.`],
+                citations,
+                evidencedDelayMinutes: evidenced,
+            };
+        }
+        if (weather.severe) {
+            return {
+                decision: 'REJECT',
+                reasons: [
+                    `Weather records show ${describeSevere(weather, flight.leg!)}, so exclusion ${clauses} applies.`,
+                    `Without the exclusion the ${measured} would have qualified for ${amount}.`,
+                ],
+                citations,
+                evidencedDelayMinutes: evidenced,
+            };
+        }
+        const airports = weather.checks.map((check) => check.airport).join(' and ');
+        reasons.push(
+            `Weather records show no severe weather at ${airports} around the flight, so exclusion ${clauses} doesn't apply.`,
+        );
+    }
+
+    const unchecked = exclusions.filter((e) => EXCLUSIONS_WITHOUT_EVIDENCE.has(e.type));
+    if (unchecked.length) {
+        const clauses = unchecked.map((e) => '§' + e.clauseId).join(', ');
+        return {
+            decision: 'REFER',
+            reasons: [
+                `The ${measured} qualifies for ${amount}, but exclusion ${clauses} could apply and needs evidence ` +
+                    'that isn’t checked automatically yet.',
+            ],
+            citations: cite(...unchecked.map((e) => e.clauseId)),
+            evidencedDelayMinutes: evidenced,
+        };
+    }
+    return { reasons };
 }

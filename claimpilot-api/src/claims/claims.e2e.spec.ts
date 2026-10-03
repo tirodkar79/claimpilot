@@ -4,6 +4,8 @@ import { MongoMemoryServer } from 'mongodb-memory-server';
 import request from 'supertest';
 import { LANGUAGE_MODEL } from '../agents/language-model.provider';
 import { mockLanguageModel, type MockCall, type MockStep } from '../agents/testing/mock-language-model';
+import { OpenMeteoMcpService } from '../weather/open-meteo-mcp.service';
+import type { HourlyWeather } from '../weather/severe-weather';
 
 const CLAIMANT = { 'x-api-key': 'claimant-key' };
 const REVIEWER = { 'x-api-key': 'reviewer-key' };
@@ -27,6 +29,22 @@ const fogExclusion = {
     citedClauseIds: ['4.1', '7.3'],
 };
 let policyReply: Record<string, unknown> = noExclusions;
+/** UTC hours with fog at the arrival airport; empty = clear weather everywhere. */
+let fogHoursAtArrival: number[] = [];
+
+/** Stand-in for the external MCP server: no child process in tests. */
+const fakeWeather = {
+    archive: async ({ latitude, startDate }: { latitude: number; startDate: string }): Promise<HourlyWeather> => {
+        const hours = Array.from({ length: 24 }, (_, hour) => hour);
+        const atArrival = latitude > 25; // DEL
+        return {
+            time: hours.map((hour) => `${startDate}T${String(hour).padStart(2, '0')}:00`),
+            weather_code: hours.map((hour) => (atArrival && fogHoursAtArrival.includes(hour) ? 45 : 1)),
+            wind_gusts_10m: hours.map(() => 10),
+            precipitation: hours.map(() => 0),
+        };
+    },
+};
 
 /**
  * Plays every agent with one shared mock model, told apart by their instructions. The orchestrator delegates
@@ -38,7 +56,20 @@ function respond(call: MockCall): MockStep {
     if (call.system.includes('You coordinate')) {
         if (call.toolResultCount === 0) return { toolCall: { name: 'consultPolicyAgent', input: { focus: 'cover' } } };
         if (call.toolResultCount === 1) return { toolCall: { name: 'consultFlightAgent', input: { focus: 'times' } } };
+        const weatherFlagged = (policyReply.relevantExclusions as unknown[]).length > 0;
+        if (call.toolResultCount === 2 && weatherFlagged) {
+            return { toolCall: { name: 'consultWeatherAgent', input: { focus: 'fog' } } };
+        }
         return { text: 'Checked the policy and the flight record.' };
+    }
+    if (call.system.includes('You check the weather')) {
+        if (call.toolResultCount === 0) {
+            return { toolCall: { name: 'weatherArchive', input: { airport: 'BOM', date: intakeReply.flightDate } } };
+        }
+        if (call.toolResultCount === 1) {
+            return { toolCall: { name: 'weatherArchive', input: { airport: 'DEL', date: intakeReply.flightDate } } };
+        }
+        return { text: JSON.stringify({ notes: 'Weather checked at both airports.' }) };
     }
     if (call.system.includes('You find what actually happened')) {
         return call.hasToolResult
@@ -72,6 +103,8 @@ beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
         .overrideProvider(LANGUAGE_MODEL)
         .useValue(mockLanguageModel(respond))
+        .overrideProvider(OpenMeteoMcpService)
+        .useValue(fakeWeather)
         .compile();
     app = moduleRef.createNestApplication();
     await app.init();
@@ -159,15 +192,39 @@ describe('Claims API', () => {
         });
     });
 
-    it('holds the payout for a person when a weather exclusion could apply', async () => {
+    it('checks the weather through the MCP agent and approves when the records show no fog', async () => {
         intakeReply = { ...intakeReply, claimedCause: 'fog' };
         policyReply = fogExclusion;
+        fogHoursAtArrival = [];
+
+        const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
+        const events = await streamedEvents(created.body.id);
+        expect(events).toEqual(
+            expect.arrayContaining(['weather:agent.started', 'weather:tool.called', 'weather:agent.completed']),
+        );
+
+        const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
+        expect(claim.body.outcome).toMatchObject({ decision: 'APPROVE', payout: { amount: 2000 } });
+        expect(claim.body.outcome.reasons).toContain(
+            "Weather records show no severe weather at BOM and DEL around the flight, so exclusion §7.3 doesn't apply.",
+        );
+        expect(claim.body.evidence.weather).toMatchObject({
+            source: 'open-meteo-mcp',
+            severe: false,
+            guardFetched: [],
+        });
+    });
+
+    it('rejects under the weather exclusion when the records show fog during the delay', async () => {
+        fogHoursAtArrival = [16];
 
         const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
         await streamedEvents(created.body.id);
 
         const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
-        expect(claim.body.outcome).toMatchObject({ decision: 'REFER', citations: [{ clauseId: '7.3' }] });
+        expect(claim.body.outcome).toMatchObject({ decision: 'REJECT', citations: [{ clauseId: '7.3' }] });
+        expect(claim.body.outcome.reasons[0]).toMatch(/^Weather records show fog at DEL at .* Asia\/Kolkata/);
+        fogHoursAtArrival = [];
     });
 
     it('rejects a delay below every tier', async () => {

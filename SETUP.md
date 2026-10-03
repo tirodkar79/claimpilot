@@ -138,7 +138,6 @@ The evidence agents arrive in later phases (policy → flight history → weathe
 section is needed yet; it's here so you can prepare. Every source except the weather MCP server runs on
 **recorded data (fixtures) by default**, so evals are repeatable and use no quota. Live calls are opt-in.
 
-> Variable names marked *planned* are fixed when the phase that uses them lands.
 
 ### Weather: Open-Meteo MCP server (the required external MCP)
 
@@ -159,8 +158,9 @@ any agent.
   npx -y open-meteo-mcp-server    # should start and wait for input; Ctrl+C to stop
   ```
 
-- *Planned* variable: `OPEN_METEO_MCP_COMMAND` (default `npx -y open-meteo-mcp-server`), in case you install
-  it globally or pin a version.
+- Variables: `OPEN_METEO_MCP_COMMAND` (default `npx -y open-meteo-mcp-server`; change it to pin a version or use a
+  global install) and `WEATHER_TIMEOUT_MS` (default 20000; covers the first call starting the server).
+- The server only starts the first time a claim actually needs a weather check, and stops with the API.
 
 If the server can't start or times out, the Weather agent reports the source as unavailable and the claim is
 referred to a human. That failure is one of the eval scenarios.
@@ -233,6 +233,8 @@ Edit `.env`:
 | `GOOGLE_GENERATIVE_AI_API_KEY` | empty | Required when `MODEL` starts with `google:` |
 | `GROQ_API_KEY` | not set | Required when `MODEL` starts with `groq:` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/api` | Only for Ollama on another host |
+| `MODEL_REQUESTS_PER_MINUTE` | `14` | Paces all agents' model calls under the free-tier quota (Gemini Flash-Lite: 15/min). `0` = no limit |
+| `OPEN_METEO_MCP_COMMAND` / `WEATHER_TIMEOUT_MS` | `npx -y open-meteo-mcp-server` / `20000` | Weather MCP server (see 3b) |
 | `HTTP_TIMEOUT_MS` / `HTTP_MAX_RETRIES` | `8000` / `2` | Outbound calls (AeroDataBox; weather later) |
 | `CLAIMANT_TIMEZONE` | `Asia/Kolkata` | Zone for "today" and claim dates (01:30 IST on 2 Oct is still 1 Oct in UTC) |
 | `FLIGHT_DATA_MODE` | `fixtures` | `live` for AeroDataBox (needs `AERODATABOX_API_KEY`) |
@@ -281,8 +283,10 @@ Check, in order:
 3. <http://localhost:5173> shows the app, with **API · online** at the bottom of the sidebar.
 4. Click **Delay payout**, then **Run triage**. Within ~10 seconds the trace shows the orchestrator delegating
    to the Policy and Flight agents and the outcome is **Approved, INR 2,000** (3h50m recorded vs 4h claimed).
-5. Try the other examples: **Fog** → Referred (§7.3), **Short delay** → Rejected, **Arrival-measured** →
-   Approved INR 6,000, **Unknown flight** → Need info, **Missing details** → Need info.
+5. Try **Fog (exclusion)**: the orchestrator also calls the Weather agent, which queries the Open-Meteo MCP
+   server; unless there really was severe weather that day, it's **Approved** with "exclusion §7.3 doesn't apply".
+6. Other examples: **Short delay** → Rejected, **Arrival-measured** → Approved INR 6,000, **Unknown flight** →
+   Need info, **Missing details** → Need info.
 
 If step 4 ends in **Referred**, the model call failed; the API terminal shows why (usually a bad key or a rate
 limit, see below).
@@ -304,7 +308,8 @@ npm run lint                      # in either app
 | `Invalid environment configuration: ...` at startup | Missing or malformed `.env` value | Fix the listed variables |
 | `/health` returns 503 `MongoDB not connected` | Mongo not running or wrong URI | `docker compose up -d mongo`; check `MONGO_URI` |
 | Claims always end in **Referred** | Model call failing | Check the API log: `401/403` = bad key, `429` = rate limit, `404` = wrong model id |
-| Claims after a few runs end in **Referred** | Free per-minute quota used up (~8 model calls per claim) | Wait a minute between claims, or switch model |
+| Claims slow down after a few runs | `MODEL_REQUESTS_PER_MINUTE` pacing (~8–11 model calls per claim) | Expected on the free tier: calls queue instead of failing |
+| Claims end in **Referred** with a quota error in the log | Limit set higher than your project's real quota | Lower `MODEL_REQUESTS_PER_MINUTE` to your AI Studio limit minus one |
 | `429` / "quota exceeded" | Free-tier limit hit | Wait a minute (per-minute limit) or until reset (daily limit); switch `MODEL` to another provider or to Ollama |
 | Web shows **API · offline** | API not running, wrong `VITE_API_URL`, or CORS | Start the API; check `VITE_API_URL` and `CORS_ORIGINS` |
 | Submitting returns `Requires role: claimant` | Role switch is on Reviewer | Switch to **Claimant** in the top bar |
@@ -373,9 +378,9 @@ Planned in later phases so free-tier limits can't fail a run:
 
 - **Recorded model responses for evals.** The suite replays saved responses by default (deterministic, free,
   fast) and only calls a live model when asked. A small live run still proves the real model behaves.
-- **Rate-limit and overload handling.** Retry `429`/`503` with backoff, run agents with limited concurrency,
-  and fall back to a second model (e.g. Flash → Flash-Lite, or Gemini → Groq) before referring a claim to a
-  human.
+- **Model fallback.** On `503` overload, fall back to a second model (e.g. Flash → Flash-Lite, or Gemini → Groq)
+  before referring a claim to a human. (Request pacing under the quota is already in place:
+  `MODEL_REQUESTS_PER_MINUTE`.)
 
 ### Sources
 

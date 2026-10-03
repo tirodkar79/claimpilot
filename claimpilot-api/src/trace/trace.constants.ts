@@ -1,5 +1,5 @@
 /** Who produced a trace event. Grows as sub-agents are added. */
-export const TRACE_ACTORS = ['orchestrator', 'intake', 'policy', 'flight'] as const;
+export const TRACE_ACTORS = ['orchestrator', 'intake', 'policy', 'flight', 'weather'] as const;
 export type TraceActor = (typeof TRACE_ACTORS)[number];
 
 export const TRACE_EVENT_TYPES = [

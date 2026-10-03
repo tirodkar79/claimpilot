@@ -1,5 +1,6 @@
 import type { FlightFindings } from '../agents/flight.agent';
 import type { PolicyFindings } from '../agents/policy.agent';
+import type { WeatherFindings } from '../agents/weather.agent';
 import { recordedLegs } from '../flights/recorded-flights';
 import { POLICY_SEEDS } from '../policies/policies.seed';
 import type { Policy } from '../policies/policy.schema';
@@ -120,13 +121,89 @@ describe('adjudicate: flight evidence', () => {
         expect(adjudicate({ ...input, flight: inFlight }).decision).toBe('REFER');
     });
 
-    it('refers instead of paying when a weather or strike exclusion could apply', () => {
-        const weather: PolicyFindings = {
-            ...noExclusions,
-            relevantExclusions: [{ type: 'severe_weather', clauseId: '7.3', summary: 'Fog excluded.' }],
+    const weatherExcluded: PolicyFindings = {
+        ...noExclusions,
+        relevantExclusions: [{ type: 'severe_weather', clauseId: '7.3', summary: 'Fog excluded.' }],
+    };
+
+    /**
+     * Weather findings for 6E2134 with optional fog at DEL.
+     * @param fog Whether fog was observed.
+     */
+    function weatherFindings(fog: boolean): WeatherFindings {
+        return {
+            source: 'open-meteo-mcp',
+            severe: fog,
+            notes: '',
+            guardFetched: [],
+            checks: [
+                {
+                    airport: 'BOM',
+                    role: 'departure',
+                    windowStart: '',
+                    windowEnd: '',
+                    severe: false,
+                    severeObservations: [],
+                    observationCount: 7,
+                },
+                {
+                    airport: 'DEL',
+                    role: 'arrival',
+                    windowStart: '',
+                    windowEnd: '',
+                    severe: fog,
+                    observationCount: 6,
+                    severeObservations: fog
+                        ? [
+                              {
+                                  time: '2026-09-22T16:00:00.000Z',
+                                  weatherCode: 45,
+                                  condition: 'fog',
+                                  gustKmh: 8,
+                                  precipitationMm: 0,
+                                  severe: true,
+                              },
+                          ]
+                        : [],
+                },
+            ],
         };
-        const outcome = adjudicate({ ...input, policyFindings: weather });
+    }
+
+    it('rejects under the weather exclusion when the records show severe weather, citing the observation', () => {
+        const outcome = adjudicate({ ...input, policyFindings: weatherExcluded, weather: weatherFindings(true) });
+        expect(outcome).toMatchObject({
+            decision: 'REJECT',
+            citations: [{ clauseId: '7.3' }],
+            evidencedDelayMinutes: 230,
+        });
+        expect(outcome.reasons).toEqual([
+            'Weather records show fog at DEL at 2026-09-22 21:30 Asia/Kolkata, so exclusion §7.3 applies.',
+            'Without the exclusion the departure delay of 3h 50m would have qualified for INR 2,000.',
+        ]);
+    });
+
+    it('approves when the records show no severe weather, saying why the exclusion does not apply', () => {
+        const outcome = adjudicate({ ...input, policyFindings: weatherExcluded, weather: weatherFindings(false) });
+        expect(outcome).toMatchObject({ decision: 'APPROVE', payout: { amount: 2000 } });
+        expect(outcome.reasons).toContain(
+            "Weather records show no severe weather at BOM and DEL around the flight, so exclusion §7.3 doesn't apply.",
+        );
+    });
+
+    it('refers when a weather exclusion could apply but no weather records were available', () => {
+        const outcome = adjudicate({ ...input, policyFindings: weatherExcluded });
         expect(outcome).toMatchObject({ decision: 'REFER', citations: [{ clauseId: '7.3' }] });
+        expect(outcome.reasons[0]).toContain('no weather records were available');
+    });
+
+    it('refers a strike exclusion, which no agent can check yet', () => {
+        const strike: PolicyFindings = {
+            ...noExclusions,
+            relevantExclusions: [{ type: 'industrial_action', clauseId: '7.4', summary: 'Strikes excluded.' }],
+        };
+        const outcome = adjudicate({ ...input, policyFindings: strike });
+        expect(outcome).toMatchObject({ decision: 'REFER', citations: [{ clauseId: '7.4' }] });
         expect(outcome.reasons[0]).toContain('qualifies for INR 2,000');
     });
 

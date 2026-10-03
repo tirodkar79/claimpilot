@@ -5,6 +5,7 @@ import type { FlightAgent, FlightFindings } from '../agents/flight.agent';
 import type { IntakeAgent, IntakeExtraction } from '../agents/intake.agent';
 import type { OrchestratorAgent, OrchestratorDelegates } from '../agents/orchestrator.agent';
 import type { PolicyAgent, PolicyFindings } from '../agents/policy.agent';
+import type { WeatherAgent, WeatherFindings } from '../agents/weather.agent';
 import { recordedLegs } from '../flights/recorded-flights';
 import type { PoliciesRepository } from '../policies/policies.repository';
 import { POLICY_SEEDS } from '../policies/policies.seed';
@@ -42,6 +43,19 @@ const flightFindings: FlightFindings = {
     lookups: [{ date: '2026-09-22', legs: 1 }],
 };
 
+const fogExcluded: PolicyFindings = {
+    ...policyFindings,
+    relevantExclusions: [{ type: 'severe_weather', clauseId: '7.3', summary: 'Fog excluded.' }],
+};
+
+const clearWeather: WeatherFindings = {
+    source: 'open-meteo-mcp',
+    severe: false,
+    checks: [],
+    notes: 'Clear at both airports.',
+    guardFetched: [],
+};
+
 const claim = {
     _id: new Types.ObjectId(),
     customerId: 'C-1042',
@@ -62,6 +76,7 @@ function setup(
         orchestrate?: Orchestrate;
         assess?: () => Promise<PolicyFindings>;
         investigate?: () => Promise<FlightFindings>;
+        checkWeather?: () => Promise<WeatherFindings>;
         policyId?: string;
     } = {},
 ) {
@@ -75,6 +90,7 @@ function setup(
     const claims = { updateById: jest.fn().mockResolvedValue(null) };
     const assess = jest.fn(overrides.assess ?? (async () => policyFindings));
     const investigate = jest.fn(overrides.investigate ?? (async () => flightFindings));
+    const checkWeather = jest.fn(overrides.checkWeather ?? (async () => clearWeather));
     const orchestrate: Orchestrate =
         overrides.orchestrate ??
         (async (delegates) => {
@@ -94,10 +110,11 @@ function setup(
         } as unknown as OrchestratorAgent,
         { assess } as unknown as PolicyAgent,
         { investigate } as unknown as FlightAgent,
+        { check: checkWeather } as unknown as WeatherAgent,
         { forClaim: () => recorder } as unknown as TraceService,
     );
     const target = { ...claim, policyId: overrides.policyId ?? claim.policyId } as Claim;
-    return { traced, claims, assess, investigate, run: () => service.run(target, '2026-09-25') };
+    return { traced, claims, assess, investigate, checkWeather, run: () => service.run(target, '2026-09-25') };
 }
 
 beforeAll(() => jest.spyOn(Logger.prototype, 'error').mockImplementation());
@@ -117,7 +134,7 @@ describe('ClaimTriageService', () => {
         );
         expect(traced).not.toContain('orchestrator:guard.enforced');
         expect(claims.updateById).toHaveBeenCalledWith(String(claim._id), {
-            evidence: { policy: policyFindings, flight: flightFindings },
+            evidence: { policy: policyFindings, flight: flightFindings, weather: undefined },
             summary: 'Checked policy and flight.',
         });
     });
@@ -161,7 +178,65 @@ describe('ClaimTriageService', () => {
         expect(traced.filter((event) => event === 'orchestrator:guard.enforced')).toHaveLength(2);
     });
 
+    it('checks weather when the orchestrator asks and a weather exclusion could change the outcome', async () => {
+        const { run, checkWeather, traced } = setup({
+            assess: async () => fogExcluded,
+            orchestrate: async (delegates) => {
+                await Promise.all([delegates.consultPolicy('cover'), delegates.consultFlight('times')]);
+                await delegates.consultWeather('fog at the airports');
+                return 'Checked weather.';
+            },
+        });
+
+        await expect(run()).resolves.toMatchObject({ decision: 'APPROVE' });
+        expect(checkWeather).toHaveBeenCalledTimes(1);
+        expect(traced).toContain('weather:agent.completed');
+        expect(traced).not.toContain('orchestrator:guard.enforced');
+    });
+
+    it('runs the weather check itself when the orchestrator skipped it', async () => {
+        const { run, checkWeather, traced } = setup({ assess: async () => fogExcluded });
+
+        await expect(run()).resolves.toMatchObject({ decision: 'APPROVE' });
+        expect(checkWeather).toHaveBeenCalledTimes(1);
+        expect(traced).toContain('orchestrator:guard.enforced');
+    });
+
+    it('blocks a weather check that cannot change the outcome, without spending a model call', async () => {
+        const { run, checkWeather, traced } = setup({
+            orchestrate: async (delegates) => {
+                await delegates.consultWeather('just in case');
+                return 'Checked everything.';
+            },
+        });
+
+        await expect(run()).resolves.toMatchObject({ decision: 'APPROVE' });
+        expect(checkWeather).not.toHaveBeenCalled();
+        expect(traced).toContain('orchestrator:guard.enforced');
+    });
+
+    it('starts each agent once when the orchestrator calls them concurrently', async () => {
+        const { run, assess, investigate } = setup({
+            orchestrate: async (delegates) => {
+                await Promise.all([
+                    delegates.consultPolicy('a'),
+                    delegates.consultPolicy('b'),
+                    delegates.consultFlight('c'),
+                ]);
+                return 'Parallel.';
+            },
+        });
+        await run();
+        expect(assess).toHaveBeenCalledTimes(1);
+        expect(investigate).toHaveBeenCalledTimes(1);
+    });
+
     it.each([
+        [
+            'Weather',
+            { assess: async () => fogExcluded, checkWeather: async () => Promise.reject(new Error('MCP down')) },
+            'weather:agent.failed',
+        ],
         ['Policy', { assess: async () => Promise.reject(new Error('overloaded')) }, 'policy:agent.failed'],
         ['Flight', { investigate: async () => Promise.reject(new Error('429')) }, 'flight:agent.failed'],
     ])('refers the claim when the %s agent fails', async (_label, override, failure) => {

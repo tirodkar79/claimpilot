@@ -72,6 +72,8 @@ const envSchema = z
         GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
         GROQ_API_KEY: z.string().optional(),
         OLLAMA_BASE_URL: z.url().default('http://localhost:11434/api'),
+        /** Pace model calls under the provider quota (Gemini Flash-Lite free tier: 15/min). 0 = no limit. */
+        MODEL_REQUESTS_PER_MINUTE: z.coerce.number().int().min(0).default(14),
         /** Time zone used for "today" and claim submission dates (claimants are in India). */
         CLAIMANT_TIMEZONE: z
             .string()
@@ -81,6 +83,10 @@ const envSchema = z
         FLIGHT_DATA_MODE: z.enum(['fixtures', 'live']).default('fixtures'),
         AERODATABOX_API_KEY: z.string().optional(),
         AERODATABOX_HOST: z.string().default('aerodatabox.p.rapidapi.com'),
+        /** Command that starts the Open-Meteo MCP server over stdio. */
+        OPEN_METEO_MCP_COMMAND: z.string().min(1).default('npx -y open-meteo-mcp-server'),
+        /** Per-call budget for the weather MCP server; the first call also covers starting it. */
+        WEATHER_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
     })
     .superRefine((env, ctx) => {
         if (env.FLIGHT_DATA_MODE === 'live' && !env.AERODATABOX_API_KEY) {

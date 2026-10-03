@@ -4,6 +4,7 @@ import { FlightCard } from './triage/FlightCard';
 import { OutcomeCard } from './triage/OutcomeCard';
 import { PolicyCard } from './triage/PolicyCard';
 import { TraceLog } from './triage/TraceLog';
+import { WeatherCard } from './triage/WeatherCard';
 import { useClaim } from './use-claim';
 import { useClaimEvents } from './use-claim-events';
 import styles from './ClaimTriagePage.module.css';
@@ -42,6 +43,12 @@ export function ClaimTriagePage() {
                     claimedMinutes={claim.data?.facts?.claimedDelayMinutes}
                     outcome={claim.data?.outcome}
                 />
+                {claim.data?.evidence?.weather && (
+                    <WeatherCard
+                        findings={claim.data.evidence.weather}
+                        timeZone={claim.data.evidence.flight?.leg?.origin.timeZone ?? 'Asia/Kolkata'}
+                    />
+                )}
                 <OutcomeCard outcome={claim.data?.outcome} summary={claim.data?.summary} />
             </div>
             <TraceLog events={stream.events} status={stream.status} error={stream.error} />
