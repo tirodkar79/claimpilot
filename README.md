@@ -18,6 +18,8 @@ Each app has its own `package.json` and runs independently.
 
 ## Prerequisites
 
+Full step-by-step setup, including API keys: **[SETUP.md](SETUP.md)**.
+
 - Node 24 (`nvm use` picks it up from `.nvmrc`). NestJS 12 is ESM-only and Jest needs Node ≥ 24.9 to load it.
 - Docker (for MongoDB)
 
@@ -52,16 +54,11 @@ they ship to the browser: fine for a local demo, not for production.
 
 ## Language model
 
-Agents run on any of three free options, chosen with `MODEL=provider:model-id` in `claimpilot-api/.env`:
+Agents run on Gemini (default), Groq or a local Ollama model, chosen with `MODEL=provider:model-id` in
+`claimpilot-api/.env`. The API refuses to start if the selected provider's key is missing. Tests never call a
+real model; they use the AI SDK's mock model.
 
-| Provider | `MODEL` example | Also set |
-|---|---|---|
-| Google Gemini (free tier, default) | `google:gemini-2.5-flash` | `GOOGLE_GENERATIVE_AI_API_KEY` from Google AI Studio |
-| Groq (free tier) | `groq:llama-3.3-70b-versatile` | `GROQ_API_KEY` |
-| Ollama (local) | `ollama:qwen2.5:7b` | `OLLAMA_BASE_URL` if not `http://localhost:11434/api` |
-
-The API refuses to start if the selected provider's key is missing. Tests never call a real model: they use
-the AI SDK's mock model.
+See **[SETUP.md](SETUP.md)** for getting API keys, free-tier limits and which provider to use.
 
 ## How a claim flows (so far)
 

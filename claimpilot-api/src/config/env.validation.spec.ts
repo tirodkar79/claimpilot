@@ -33,7 +33,7 @@ describe('validateEnv', () => {
     });
 
     it('defaults to Gemini and splits MODEL into provider and model id', () => {
-        expect(validateEnv(required).MODEL).toEqual({ provider: 'google', modelId: 'gemini-2.5-flash' });
+        expect(validateEnv(required).MODEL).toEqual({ provider: 'google', modelId: 'gemini-3.5-flash-lite' });
         expect(validateEnv({ ...required, MODEL: 'ollama:qwen2.5:7b' }).MODEL).toEqual({
             provider: 'ollama',
             modelId: 'qwen2.5:7b',
@@ -43,7 +43,7 @@ describe('validateEnv', () => {
     it('requires the API key of the selected hosted provider only', () => {
         const { GOOGLE_GENERATIVE_AI_API_KEY: _omit, ...withoutGoogleKey } = required;
         expect(() => validateEnv(withoutGoogleKey)).toThrow(/GOOGLE_GENERATIVE_AI_API_KEY: required/);
-        expect(() => validateEnv({ ...withoutGoogleKey, MODEL: 'groq:llama-3.3-70b-versatile' })).toThrow(
+        expect(() => validateEnv({ ...withoutGoogleKey, MODEL: 'groq:openai/gpt-oss-120b' })).toThrow(
             /GROQ_API_KEY: required/,
         );
         expect(validateEnv({ ...withoutGoogleKey, MODEL: 'ollama:qwen2.5:7b' }).MODEL.provider).toBe('ollama');

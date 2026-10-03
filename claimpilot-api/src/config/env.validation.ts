@@ -29,7 +29,7 @@ const apiKeys = z
         return keys;
     });
 
-/** `MODEL=provider:model-id`, e.g. `google:gemini-2.5-flash` → { provider, modelId }. */
+/** `MODEL=provider:model-id`, e.g. `google:gemini-3.5-flash-lite` → { provider, modelId }. */
 const model = z
     .string()
     .regex(new RegExp(`^(${MODEL_PROVIDERS.join('|')}):.+`), `must be <${MODEL_PROVIDERS.join('|')}>:<model-id>`)
@@ -55,7 +55,7 @@ const envSchema = z
         HTTP_TIMEOUT_MS: z.coerce.number().int().positive().default(8000),
         HTTP_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
         CORS_ORIGINS: csv.prefault('http://localhost:5173'),
-        MODEL: model.prefault('google:gemini-2.5-flash'),
+        MODEL: model.prefault('google:gemini-3.5-flash-lite'),
         GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
         GROQ_API_KEY: z.string().optional(),
         OLLAMA_BASE_URL: z.url().default('http://localhost:11434/api'),
