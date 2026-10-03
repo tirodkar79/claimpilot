@@ -1,0 +1,41 @@
+import { useParams } from 'react-router';
+import { FactsCard } from './triage/FactsCard';
+import { OutcomeCard } from './triage/OutcomeCard';
+import { TraceLog } from './triage/TraceLog';
+import { useClaim } from './use-claim';
+import { useClaimEvents } from './use-claim-events';
+import styles from './ClaimTriagePage.module.css';
+
+/** Live view of one claim: what was submitted, what Intake extracted, the outcome and the trace. */
+export function ClaimTriagePage() {
+    const { claimId = '' } = useParams();
+    const claim = useClaim(claimId);
+    const stream = useClaimEvents(claimId);
+
+    if (claim.isError) {
+        return (
+            <p className={styles.error} role="alert">
+                {claim.error.message}
+            </p>
+        );
+    }
+
+    return (
+        <div className={styles.layout}>
+            <div className={styles.column}>
+                <section className={styles.summary}>
+                    <div className={styles.meta}>
+                        <span>{claim.data?.customerId}</span>
+                        <span>{claim.data?.policyId}</span>
+                        {claim.data?.bookingRef && <span>{claim.data.bookingRef}</span>}
+                        <span className={styles.claimId}>claim {claimId.slice(-6)}</span>
+                    </div>
+                    <blockquote className={styles.message}>{claim.data?.message ?? '…'}</blockquote>
+                </section>
+                <FactsCard facts={claim.data?.facts} />
+                <OutcomeCard outcome={claim.data?.outcome} />
+            </div>
+            <TraceLog events={stream.events} status={stream.status} error={stream.error} />
+        </div>
+    );
+}

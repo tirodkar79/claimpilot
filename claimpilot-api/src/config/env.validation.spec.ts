@@ -4,6 +4,7 @@ import { validateEnv } from './env.validation';
 const required = {
     MONGO_URI: 'mongodb://localhost:27017/claimpilot',
     API_KEYS: 'claimant:claimant-key, reviewer:reviewer-key',
+    GOOGLE_GENERATIVE_AI_API_KEY: 'google-key',
 };
 
 describe('validateEnv', () => {
@@ -29,6 +30,27 @@ describe('validateEnv', () => {
         ['retries out of range', { HTTP_MAX_RETRIES: '9' }, /HTTP_MAX_RETRIES/],
     ])('rejects %s', (_label, override, message) => {
         expect(() => validateEnv({ ...required, ...override })).toThrow(message);
+    });
+
+    it('defaults to Gemini and splits MODEL into provider and model id', () => {
+        expect(validateEnv(required).MODEL).toEqual({ provider: 'google', modelId: 'gemini-2.5-flash' });
+        expect(validateEnv({ ...required, MODEL: 'ollama:qwen2.5:7b' }).MODEL).toEqual({
+            provider: 'ollama',
+            modelId: 'qwen2.5:7b',
+        });
+    });
+
+    it('requires the API key of the selected hosted provider only', () => {
+        const { GOOGLE_GENERATIVE_AI_API_KEY: _omit, ...withoutGoogleKey } = required;
+        expect(() => validateEnv(withoutGoogleKey)).toThrow(/GOOGLE_GENERATIVE_AI_API_KEY: required/);
+        expect(() => validateEnv({ ...withoutGoogleKey, MODEL: 'groq:llama-3.3-70b-versatile' })).toThrow(
+            /GROQ_API_KEY: required/,
+        );
+        expect(validateEnv({ ...withoutGoogleKey, MODEL: 'ollama:qwen2.5:7b' }).MODEL.provider).toBe('ollama');
+    });
+
+    it('rejects an unknown model provider', () => {
+        expect(() => validateEnv({ ...required, MODEL: 'openai:gpt' })).toThrow(/MODEL: must be/);
     });
 
     it('lists every missing variable at once', () => {

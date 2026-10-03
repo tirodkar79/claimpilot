@@ -1,0 +1,53 @@
+.layout {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 400px;
+    gap: 16px;
+}
+
+.column {
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    min-width: 0;
+}
+
+.summary {
+    padding: 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+}
+
+.meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 14px;
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.claimId {
+    margin-left: auto;
+    color: var(--muted);
+    font-weight: 400;
+}
+
+.message {
+    margin-top: 12px;
+    padding-left: 14px;
+    border-left: 3px solid var(--amber);
+    color: var(--ink-2);
+    font-size: 14px;
+    line-height: 1.6;
+}
+
+.error {
+    color: var(--bad);
+}
+
+@media (max-width: 960px) {
+    .layout {
+        grid-template-columns: 1fr;
+    }
+}

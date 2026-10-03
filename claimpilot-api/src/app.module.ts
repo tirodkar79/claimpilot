@@ -2,6 +2,7 @@ import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { APP_FILTER, APP_INTERCEPTOR } from '@nestjs/core';
 import { AuthModule } from './auth/auth.module';
+import { ClaimsModule } from './claims/claims.module';
 import { AllExceptionsFilter } from './common/filters/all-exceptions.filter';
 import { LoggingInterceptor } from './common/interceptors/logging.interceptor';
 import { validateEnv } from './config/env.validation';
@@ -18,6 +19,7 @@ import { RequestContextModule } from './request-context/request-context.module';
         HttpClientModule,
         AuthModule,
         HealthModule,
+        ClaimsModule,
     ],
     providers: [
         { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },

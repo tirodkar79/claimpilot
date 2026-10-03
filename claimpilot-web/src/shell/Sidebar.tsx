@@ -1,4 +1,5 @@
-import { LayoutGrid, ShieldCheck } from 'lucide-react';
+import { Plus, ShieldCheck } from 'lucide-react';
+import { NavLink } from 'react-router';
 import { ApiStatus } from '../health/ApiStatus';
 import styles from './AppShell.module.css';
 
@@ -16,10 +17,10 @@ export function Sidebar() {
             </div>
 
             <nav aria-label="Main">
-                <a className={styles.navItem} aria-current="page" href="/">
-                    <LayoutGrid size={16} strokeWidth={1.8} />
-                    Overview
-                </a>
+                <NavLink to="/" end className={styles.navItem}>
+                    <Plus size={16} strokeWidth={1.8} />
+                    New claim
+                </NavLink>
             </nav>
 
             <footer className={styles.sidebarFooter}>

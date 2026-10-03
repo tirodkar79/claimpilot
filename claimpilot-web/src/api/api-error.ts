@@ -1,7 +1,7 @@
 import { isAxiosError } from 'axios';
 
 /** Error body every API failure returns (see claimpilot-api AllExceptionsFilter). */
-interface ApiErrorBody {
+export interface ApiErrorBody {
     error?: { code?: string; message?: string; requestId?: string; details?: unknown };
 }
 

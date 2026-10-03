@@ -1,15 +1,29 @@
 import { QueryClientProvider } from '@tanstack/react-query';
-import { OverviewPage } from '../overview/OverviewPage';
-import { AppShell } from '../shell/AppShell';
+import { createBrowserRouter, RouterProvider } from 'react-router';
+import { ClaimTriagePage } from '../claims/ClaimTriagePage';
+import { NewClaimPage } from '../claims/NewClaimPage';
+import { AppShell, type RouteHandle } from '../shell/AppShell';
 import { queryClient } from './query-client';
 
-/** Root component: providers plus the shell. Routing arrives with the first feature screen. */
+const router = createBrowserRouter([
+    {
+        element: <AppShell />,
+        children: [
+            { index: true, element: <NewClaimPage />, handle: { title: 'New claim' } satisfies RouteHandle },
+            {
+                path: 'claims/:claimId',
+                element: <ClaimTriagePage />,
+                handle: { title: 'Live triage' } satisfies RouteHandle,
+            },
+        ],
+    },
+]);
+
+/** Root component: data and routing providers. */
 export function App() {
     return (
         <QueryClientProvider client={queryClient}>
-            <AppShell title="Overview">
-                <OverviewPage />
-            </AppShell>
+            <RouterProvider router={router} />
         </QueryClientProvider>
     );
 }
