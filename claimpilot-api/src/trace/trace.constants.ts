@@ -1,5 +1,5 @@
 /** Who produced a trace event. Grows as sub-agents are added. */
-export const TRACE_ACTORS = ['orchestrator', 'intake', 'policy', 'flight', 'weather'] as const;
+export const TRACE_ACTORS = ['orchestrator', 'intake', 'policy', 'flight', 'weather', 'integrity'] as const;
 export type TraceActor = (typeof TRACE_ACTORS)[number];
 
 export const TRACE_EVENT_TYPES = [
@@ -13,6 +13,8 @@ export const TRACE_EVENT_TYPES = [
     'tool.called',
     /** Code stepped in because an agent skipped a required step. */
     'guard.enforced',
+    /** Deterministic checks (no model) finished. */
+    'checks.completed',
     'decision',
     'triage.completed',
 ] as const;

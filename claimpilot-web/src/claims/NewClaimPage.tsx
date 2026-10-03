@@ -55,6 +55,23 @@ function examples(flightDay: string): { label: string; claim: CreateClaimRequest
             },
         },
         {
+            label: 'Late purchase',
+            claim: {
+                customerId: 'C-3001',
+                policyId: 'P-60',
+                bookingRef: 'LT3001',
+                message: `My flight 6E-2134 from Mumbai to Delhi on ${flightDay} was delayed 4 hours due to a technical fault.`,
+            },
+        },
+        {
+            label: 'Wrong booking',
+            claim: {
+                ...standard,
+                bookingRef: 'ZZ9999',
+                message: `My flight 6E-2134 from Mumbai to Delhi on ${flightDay} was delayed 4 hours due to a technical fault.`,
+            },
+        },
+        {
             label: 'Unknown flight',
             claim: {
                 ...standard,

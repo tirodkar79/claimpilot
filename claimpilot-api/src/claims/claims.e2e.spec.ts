@@ -1,10 +1,13 @@
 import { INestApplication, Logger } from '@nestjs/common';
+import { getModelToken } from '@nestjs/mongoose';
 import { Test } from '@nestjs/testing';
+import type { Model } from 'mongoose';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import request from 'supertest';
 import { LANGUAGE_MODEL } from '../agents/language-model.provider';
 import { mockLanguageModel, type MockCall, type MockStep } from '../agents/testing/mock-language-model';
 import { OpenMeteoMcpService } from '../weather/open-meteo-mcp.service';
+import { Claim } from './claim.schema';
 import type { HourlyWeather } from '../weather/severe-weather';
 
 const CLAIMANT = { 'x-api-key': 'claimant-key' };
@@ -110,6 +113,9 @@ beforeAll(async () => {
     await app.init();
 }, 120_000);
 
+// Each test starts with no earlier claims, so the duplicate check only sees what a test creates itself.
+beforeEach(() => app.get<Model<Claim>>(getModelToken(Claim.name)).deleteMany({}));
+
 afterAll(async () => {
     await app?.close();
     await mongo?.stop();
@@ -171,6 +177,7 @@ describe('Claims API', () => {
             'flight:tool.called',
             'flight:agent.completed',
             'orchestrator:agent.completed',
+            'integrity:checks.completed',
             'orchestrator:decision',
             'orchestrator:triage.completed',
         ]);
@@ -285,6 +292,53 @@ describe('Claims API', () => {
             reasons: ['What is your flight number (for example 6E-2134)?', 'On what date was your flight?'],
             citations: [],
         });
+    });
+
+    /**
+     * Submits a claim and waits for triage to finish.
+     * @param claimBody Request body.
+     */
+    async function submitAndWait(claimBody: Record<string, unknown>) {
+        const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(claimBody).expect(202);
+        await streamedEvents(created.body.id);
+        return (await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT)).body;
+    }
+
+    it('rejects a second claim for a flight that was already paid', async () => {
+        intakeReply = {
+            flightNumber: '6E-2134',
+            flightDate: recentFlightDate,
+            origin: 'BOM',
+            destination: 'DEL',
+            claimedDelayMinutes: 240,
+            claimedCause: 'technical fault',
+        };
+        policyReply = noExclusions;
+
+        expect((await submitAndWait(body)).outcome.decision).toBe('APPROVE');
+        const second = await submitAndWait(body);
+        expect(second.outcome.decision).toBe('REJECT');
+        expect(second.evidence.integrity.flags[0].code).toBe('duplicate_paid');
+    });
+
+    it('refers a claim quoting someone else’s booking', async () => {
+        const claim = await submitAndWait({ ...body, bookingRef: 'ZZ9999' });
+        expect(claim.outcome.decision).toBe('REFER');
+        expect(claim.evidence.integrity.flags.map((f: { code: string }) => f.code)).toEqual([
+            'not_on_booking',
+            'booking_flight_mismatch',
+        ]);
+    });
+
+    it('refers a claim under a policy bought after the flight, citing clause 7.1', async () => {
+        const claim = await submitAndWait({
+            customerId: 'C-3001',
+            policyId: 'P-60',
+            bookingRef: 'LT3001',
+            message: body.message,
+        });
+        expect(claim.outcome).toMatchObject({ decision: 'REFER', citations: [{ clauseId: '7.1' }] });
+        expect(claim.evidence.integrity.flags[0].code).toBe('late_purchase');
     });
 
     it('returns 404 for unknown or malformed claim ids', async () => {

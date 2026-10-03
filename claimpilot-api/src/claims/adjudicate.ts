@@ -2,6 +2,7 @@ import type { FlightFindings } from '../agents/flight.agent';
 import type { PolicyFindings } from '../agents/policy.agent';
 import type { WeatherFindings } from '../agents/weather.agent';
 import { localDateTime } from '../common/utils/local-date';
+import type { IntegrityFindings } from '../integrity/integrity.service';
 import { computeDelay } from '../flights/flight-delay';
 import type { Policy } from '../policies/policy.schema';
 import type { ClaimFacts } from './claim-facts';
@@ -19,6 +20,8 @@ export interface AdjudicationInput {
     flight?: FlightFindings;
     /** Present when a weather exclusion was flagged and the delay qualified. */
     weather?: WeatherFindings;
+    /** Integrity checks; they gate every approval. */
+    integrity?: IntegrityFindings;
 }
 
 /** Exclusions that need evidence no agent gathers yet (industrial action). Weather is checked by the Weather agent. */
@@ -48,12 +51,14 @@ function duration(minutes: number): string {
  * 9. Severe-weather exclusion flagged → weather records show severe weather → REJECT (clause + observation);
  *    no weather evidence → REFER; clear weather → the exclusion doesn't apply, continue.
  * 10. Another exclusion flagged that needs evidence we can't gather (industrial action) → REFER.
- * 11. APPROVE the tier the evidence reaches, which may be lower than the one claimed.
+ * 11. Integrity: an earlier claim for this flight was already paid → REJECT; any other flag (open duplicate,
+ *     policy bought after departure, not on the booking) → REFER. Flags never reject on their own.
+ * 12. APPROVE the tier the evidence reaches, which may be lower than the one claimed.
  *
  * @param input Facts, policy, evidence and claim metadata. `facts.flightDate` must be present.
  */
 export function adjudicate(input: AdjudicationInput): ClaimOutcome {
-    const { facts, policy, policyId, customerId, submittedOn, policyFindings, flight, weather } = input;
+    const { facts, policy, policyId, customerId, submittedOn, policyFindings, flight, weather, integrity } = input;
     if (!policy) {
         return {
             decision: 'NEED_INFO',
@@ -149,6 +154,9 @@ export function adjudicate(input: AdjudicationInput): ClaimOutcome {
 
     const exclusionStep = applyExclusions({ policyFindings, weather, flight, measured, tier, evidenced, cite });
     if ('decision' in exclusionStep) return exclusionStep;
+
+    const integrityOutcome = applyIntegrity(integrity, evidenced, cite);
+    if (integrityOutcome) return integrityOutcome;
 
     return {
         decision: 'APPROVE',
@@ -261,4 +269,38 @@ function applyExclusions(context: ExclusionContext): ClaimOutcome | { reasons: s
         };
     }
     return { reasons };
+}
+
+/**
+ * Step 11: integrity flags gate the approval. Only an already-paid duplicate is rejected; every other flag
+ * goes to a person, because a flag is a reason to look, not proof.
+ * @param integrity Integrity findings (absent only when no policy was found, which ends earlier).
+ * @param evidenced Recorded delay in minutes.
+ * @param cite Clause citation helper.
+ */
+function applyIntegrity(
+    integrity: IntegrityFindings | undefined,
+    evidenced: number,
+    cite: (...clauseIds: string[]) => ClauseCitation[],
+): ClaimOutcome | undefined {
+    if (!integrity?.flags.length) return undefined;
+    const paid = integrity.flags.find((flag) => flag.code === 'duplicate_paid');
+    if (paid) {
+        return {
+            decision: 'REJECT',
+            reasons: [`This flight has already been paid out for this customer. ${paid.detail}`],
+            citations: [],
+            evidencedDelayMinutes: evidenced,
+        };
+    }
+    const clauseIds = integrity.flags.flatMap((flag) => (flag.clauseId ? [flag.clauseId] : []));
+    return {
+        decision: 'REFER',
+        reasons: [
+            'The delay qualifies, but integrity checks raised questions a person should review:',
+            ...integrity.flags.map((flag) => flag.detail),
+        ],
+        citations: cite(...clauseIds),
+        evidencedDelayMinutes: evidenced,
+    };
 }

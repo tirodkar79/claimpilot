@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { MongooseModule } from '@nestjs/mongoose';
 import { AgentsModule } from '../agents/agents.module';
+import { IntegrityModule } from '../integrity/integrity.module';
 import { PoliciesModule } from '../policies/policies.module';
 import { TraceModule } from '../trace/trace.module';
 import { Claim, ClaimSchema } from './claim.schema';
@@ -14,6 +15,7 @@ import { ClaimsService } from './claims.service';
         MongooseModule.forFeature([{ name: Claim.name, schema: ClaimSchema }]),
         AgentsModule,
         PoliciesModule,
+        IntegrityModule,
         TraceModule,
     ],
     controllers: [ClaimsController],

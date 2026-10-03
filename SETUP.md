@@ -285,8 +285,9 @@ Check, in order:
    to the Policy and Flight agents and the outcome is **Approved, INR 2,000** (3h50m recorded vs 4h claimed).
 5. Try **Fog (exclusion)**: the orchestrator also calls the Weather agent, which queries the Open-Meteo MCP
    server; unless there really was severe weather that day, it's **Approved** with "exclusion §7.3 doesn't apply".
-6. Other examples: **Short delay** → Rejected, **Arrival-measured** → Approved INR 6,000, **Unknown flight** →
-   Need info, **Missing details** → Need info.
+6. Other examples: **Short delay** → Rejected, **Arrival-measured** → Approved INR 6,000, **Late purchase** →
+   Referred (§7.1), **Wrong booking** → Referred, **Unknown flight** → Need info, **Missing details** → Need info.
+7. Submit **Delay payout** a second time: the duplicate is **Rejected** because the first one was already paid.
 
 If step 4 ends in **Referred**, the model call failed; the API terminal shows why (usually a bad key or a rate
 limit, see below).

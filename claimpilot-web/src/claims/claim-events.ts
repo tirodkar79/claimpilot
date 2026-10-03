@@ -6,7 +6,7 @@ import { env } from '../config/env';
 export interface TraceEvent {
     claimId: string;
     seq: number;
-    actor: 'orchestrator' | 'intake' | 'policy' | 'flight' | 'weather';
+    actor: 'orchestrator' | 'intake' | 'policy' | 'flight' | 'weather' | 'integrity';
     type:
         | 'triage.started'
         | 'agent.started'
@@ -15,6 +15,7 @@ export interface TraceEvent {
         | 'agent.delegated'
         | 'tool.called'
         | 'guard.enforced'
+        | 'checks.completed'
         | 'decision'
         | 'triage.completed';
     message: string;

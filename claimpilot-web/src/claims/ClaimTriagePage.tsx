@@ -1,6 +1,7 @@
 import { useParams } from 'react-router';
 import { FactsCard } from './triage/FactsCard';
 import { FlightCard } from './triage/FlightCard';
+import { IntegrityCard } from './triage/IntegrityCard';
 import { OutcomeCard } from './triage/OutcomeCard';
 import { PolicyCard } from './triage/PolicyCard';
 import { TraceLog } from './triage/TraceLog';
@@ -49,6 +50,7 @@ export function ClaimTriagePage() {
                         timeZone={claim.data.evidence.flight?.leg?.origin.timeZone ?? 'Asia/Kolkata'}
                     />
                 )}
+                {claim.data?.evidence?.integrity && <IntegrityCard findings={claim.data.evidence.integrity} />}
                 <OutcomeCard outcome={claim.data?.outcome} summary={claim.data?.summary} />
             </div>
             <TraceLog events={stream.events} status={stream.status} error={stream.error} />

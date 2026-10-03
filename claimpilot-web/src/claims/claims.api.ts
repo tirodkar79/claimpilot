@@ -75,6 +75,16 @@ export interface WeatherFindings {
     guardFetched: string[];
 }
 
+/** Integrity checks (claimpilot-api/src/integrity/integrity.service.ts). Plain code, no model. */
+export interface IntegrityFindings {
+    flags: { code: string; detail: string; clauseId?: string }[];
+    checked: {
+        duplicates: number;
+        booking: 'matched' | 'not_given' | 'problem';
+        purchase: 'before_departure' | 'after_departure' | 'not_checked';
+    };
+}
+
 export interface PolicyClause {
     id: string;
     title: string;
@@ -101,7 +111,12 @@ export interface Claim {
     status: ClaimStatus;
     facts?: ClaimFacts;
     outcome?: ClaimOutcome;
-    evidence?: { policy?: PolicyFindings; flight?: FlightFindings; weather?: WeatherFindings };
+    evidence?: {
+        policy?: PolicyFindings;
+        flight?: FlightFindings;
+        weather?: WeatherFindings;
+        integrity?: IntegrityFindings;
+    };
     /** Orchestrator's summary for the reviewer; informational only. */
     summary?: string;
     createdAt: string;

@@ -127,6 +127,39 @@ export const POLICY_SEEDS: PolicySeed[] = [
         ],
     },
     {
+        // Bought yesterday with cover starting months earlier: a claim for a flight before the purchase is the
+        // "policy bought after the delay was known" integrity scenario (seeded relative to startup time).
+        policyId: 'P-60',
+        product: 'SkyGuard Standard',
+        holderCustomerId: 'C-3001',
+        coverageStart: '2026-06-01',
+        coverageEnd: '2027-05-31',
+        purchasedAt: new Date(Date.now() - 24 * 60 * 60 * 1000),
+        claimDeadlineDays: 30,
+        delayMeasure: 'departure',
+        payoutTiers: [
+            { minDelayMinutes: 120, amount: 2000, currency: 'INR' },
+            { minDelayMinutes: 240, amount: 5000, currency: 'INR' },
+        ],
+        clauseRefs: { coveragePeriod: '2.1', claimDeadline: '9.2', delayMeasure: '4.1', payoutTiers: '4.2' },
+        clauses: [
+            COMMON_CLAUSES.definitions,
+            COMMON_CLAUSES.coveragePeriod,
+            {
+                id: '4.1',
+                title: 'How delay is measured',
+                text: 'Delay is measured from the scheduled departure to the actual departure.',
+            },
+            {
+                id: '4.2',
+                title: 'Delay benefit',
+                text: 'We pay INR 2,000 for 2 hours or more and INR 5,000 for 4 hours or more.',
+            },
+            COMMON_CLAUSES.knownBeforePurchase,
+            COMMON_CLAUSES.claimDeadline,
+        ],
+    },
+    {
         policyId: 'P-12',
         product: 'SkyGuard Standard',
         holderCustomerId: 'C-1042',

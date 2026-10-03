@@ -1,8 +1,8 @@
 # ClaimPilot
 
 Multi-agent triage for flight-delay insurance claims. An orchestrating agent delegates to specialised
-sub-agents (policy, flight evidence, weather via the external **Open-Meteo MCP server**, integrity next), and a
-deterministic rules engine decides the outcome: **APPROVE / REJECT / REFER / NEED_INFO**.
+sub-agents (policy, flight evidence, weather via the external **Open-Meteo MCP server**), integrity checks run as
+plain code, and a deterministic rules engine decides the outcome: **APPROVE / REJECT / REFER / NEED_INFO**.
 
 > Work in progress. This README grows phase by phase.
 
@@ -90,6 +90,10 @@ POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► 
    fetches any window the agent skipped.
 8. A **guard** runs any required agent the orchestrator skipped or that failed, and blocks a weather check
    that can't matter, so a model mistake can't skip a check or waste quota. Evals will count its interventions.
+   **Integrity checks** then run for every claim with a policy: an earlier claim for the same flight (paid or
+   open), a policy bought after the flight was due to leave, and whether the claimant is on the quoted booking.
+   These are plain code, not an agent: each rule is a lookup and a comparison, so a model would add cost and
+   quota use without adding judgement.
 9. The **rules engine** (`adjudicate`, plain code) decides, first failing check wins:
 
    | Check | Outcome |
@@ -103,6 +107,8 @@ POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► 
    | Weather exclusion flagged + weather records show severe weather | REJECT (cites clause and observation) |
    | Weather exclusion flagged + no weather records | REFER |
    | Strike exclusion flagged (no evidence source yet) | REFER |
+   | Same flight already paid to this customer | REJECT |
+   | Any other integrity flag (open duplicate, bought after departure, not on booking) | REFER (a flag is a reason to look, not proof) |
    | Otherwise | **APPROVE** the tier the record reaches, which may be lower than claimed |
 
    Any agent failure → REFER to a human.
@@ -116,6 +122,14 @@ POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► 
 | P-77 SkyGuard Standard | C-1042 | Delay from departure; 2h ₹2,000 · 4h ₹5,000 · 6h ₹10,000; excludes severe weather |
 | P-91 SkyGuard Plus | C-2077 | Delay from **arrival**; 90m ₹3,000 · 3h ₹6,000; covers weather |
 | P-12 SkyGuard Standard | C-1042 | Expired 2025 |
+| P-60 SkyGuard Standard | C-3001 | Bought yesterday with backdated cover: the late-purchase scenario |
+
+| Booking | Flight | Passengers | Scenario |
+|---|---|---|---|
+| XK9P2L | 6E2134 | C-1042 | Normal |
+| QP7Y4M | QP1303 | C-2077 | Normal |
+| LT3001 | 6E2134 | C-3001 | Late purchase |
+| ZZ9999 | AI865 | C-5555 | Quoted by C-1042: not on booking, wrong flight |
 
 | Recorded flight | Route | What it shows |
 |---|---|---|

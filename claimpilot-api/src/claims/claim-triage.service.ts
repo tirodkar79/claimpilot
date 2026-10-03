@@ -8,6 +8,7 @@ import { WeatherAgent, type WeatherFindings } from '../agents/weather.agent';
 import { localDate, localDateTime } from '../common/utils/local-date';
 import { EnvConfig } from '../config/env.validation';
 import { computeDelay } from '../flights/flight-delay';
+import { IntegrityService, type IntegrityFindings } from '../integrity/integrity.service';
 import { PoliciesRepository } from '../policies/policies.repository';
 import type { Policy } from '../policies/policy.schema';
 import type { TraceActor } from '../trace/trace.constants';
@@ -19,6 +20,7 @@ import type { ClaimOutcome } from './claims.constants';
 import { ClaimsRepository } from './claims.repository';
 
 const INTAKE_FAILED_REASON = 'We could not read the claim automatically, so a person will review it.';
+const INTEGRITY_FAILED_REASON = 'We could not run the integrity checks, so a person will review it.';
 type SubAgent = Extract<TraceActor, 'policy' | 'flight' | 'weather'>;
 
 const AGENT_FAILED_REASON: Record<SubAgent, string> = {
@@ -53,7 +55,8 @@ interface RunContext {
  *
  * Intake (code-invoked, quarantined) → completeness check → LLM orchestrator, which delegates to the
  * Policy and Flight agents, and to the Weather agent only when a weather exclusion could change the outcome →
- * guard (runs required agents the orchestrator skipped, blocks unneeded ones) → rules engine decides.
+ * guard (runs required agents the orchestrator skipped, blocks unneeded ones) → integrity checks (code) →
+ * rules engine decides.
  * Model output never decides the outcome; failures end in REFER rather than a guess.
  */
 @Injectable()
@@ -70,6 +73,7 @@ export class ClaimTriageService {
         private readonly policyAgent: PolicyAgent,
         private readonly flightAgent: FlightAgent,
         private readonly weatherAgent: WeatherAgent,
+        private readonly integrity: IntegrityService,
         private readonly trace: TraceService,
     ) {
         this.timeZone = config.get('CLAIMANT_TIMEZONE', { infer: true });
@@ -182,11 +186,13 @@ export class ClaimTriageService {
             await delegates.consultWeather('Required weather check');
         }
 
+        const integrity = await this.checkIntegrity(run);
         await this.claims.updateById(String(claim._id), {
             evidence: {
                 policy: run.policyEvidence.result,
                 flight: run.flightEvidence.result,
                 weather: run.weatherEvidence.result,
+                integrity: integrity ?? undefined,
             },
             summary,
         });
@@ -195,6 +201,7 @@ export class ClaimTriageService {
             if (evidence[agent].failed)
                 return { decision: 'REFER', reasons: [AGENT_FAILED_REASON[agent]], citations: [] };
         }
+        if (integrity === null) return { decision: 'REFER', reasons: [INTEGRITY_FAILED_REASON], citations: [] };
         return adjudicate({
             facts,
             policy: run.policy,
@@ -204,7 +211,29 @@ export class ClaimTriageService {
             policyFindings: run.policyEvidence.result,
             flight: run.flightEvidence.result,
             weather: run.weatherEvidence.result,
+            integrity,
         });
+    }
+
+    /**
+     * Integrity checks (plain code), run for every claim with a policy so no approval skips them.
+     * @param run Current run.
+     * @returns Findings; undefined when there is no policy; null when the checks themselves failed.
+     */
+    private async checkIntegrity(run: RunContext): Promise<IntegrityFindings | undefined | null> {
+        if (!run.policy) return undefined;
+        try {
+            return await this.integrity.check(
+                run.claim,
+                run.facts,
+                run.policy,
+                run.flightEvidence.result?.leg,
+                run.recorder,
+            );
+        } catch (error) {
+            this.logError('Integrity checks', run.claim, error);
+            return null;
+        }
     }
 
     /**

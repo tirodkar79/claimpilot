@@ -7,6 +7,7 @@ import type { OrchestratorAgent, OrchestratorDelegates } from '../agents/orchest
 import type { PolicyAgent, PolicyFindings } from '../agents/policy.agent';
 import type { WeatherAgent, WeatherFindings } from '../agents/weather.agent';
 import { recordedLegs } from '../flights/recorded-flights';
+import type { IntegrityFindings, IntegrityService } from '../integrity/integrity.service';
 import type { PoliciesRepository } from '../policies/policies.repository';
 import { POLICY_SEEDS } from '../policies/policies.seed';
 import type { TraceRecorder, TraceService } from '../trace/trace.service';
@@ -56,6 +57,11 @@ const clearWeather: WeatherFindings = {
     guardFetched: [],
 };
 
+const cleanIntegrity: IntegrityFindings = {
+    flags: [],
+    checked: { duplicates: 0, booking: 'matched', purchase: 'before_departure' },
+};
+
 const claim = {
     _id: new Types.ObjectId(),
     customerId: 'C-1042',
@@ -77,6 +83,7 @@ function setup(
         assess?: () => Promise<PolicyFindings>;
         investigate?: () => Promise<FlightFindings>;
         checkWeather?: () => Promise<WeatherFindings>;
+        checkIntegrity?: () => Promise<IntegrityFindings>;
         policyId?: string;
     } = {},
 ) {
@@ -91,6 +98,7 @@ function setup(
     const assess = jest.fn(overrides.assess ?? (async () => policyFindings));
     const investigate = jest.fn(overrides.investigate ?? (async () => flightFindings));
     const checkWeather = jest.fn(overrides.checkWeather ?? (async () => clearWeather));
+    const checkIntegrity = jest.fn(overrides.checkIntegrity ?? (async () => cleanIntegrity));
     const orchestrate: Orchestrate =
         overrides.orchestrate ??
         (async (delegates) => {
@@ -111,10 +119,19 @@ function setup(
         { assess } as unknown as PolicyAgent,
         { investigate } as unknown as FlightAgent,
         { check: checkWeather } as unknown as WeatherAgent,
+        { check: checkIntegrity } as unknown as IntegrityService,
         { forClaim: () => recorder } as unknown as TraceService,
     );
     const target = { ...claim, policyId: overrides.policyId ?? claim.policyId } as Claim;
-    return { traced, claims, assess, investigate, checkWeather, run: () => service.run(target, '2026-09-25') };
+    return {
+        traced,
+        claims,
+        assess,
+        investigate,
+        checkWeather,
+        checkIntegrity,
+        run: () => service.run(target, '2026-09-25'),
+    };
 }
 
 beforeAll(() => jest.spyOn(Logger.prototype, 'error').mockImplementation());
@@ -134,7 +151,7 @@ describe('ClaimTriageService', () => {
         );
         expect(traced).not.toContain('orchestrator:guard.enforced');
         expect(claims.updateById).toHaveBeenCalledWith(String(claim._id), {
-            evidence: { policy: policyFindings, flight: flightFindings, weather: undefined },
+            evidence: { policy: policyFindings, flight: flightFindings, weather: undefined, integrity: cleanIntegrity },
             summary: 'Checked policy and flight.',
         });
     });
@@ -243,6 +260,25 @@ describe('ClaimTriageService', () => {
         const { run, traced } = setup(override);
         await expect(run()).resolves.toMatchObject({ decision: 'REFER' });
         expect(traced).toContain(failure);
+    });
+
+    it('runs the integrity checks and lets their flags gate the approval', async () => {
+        const { run, checkIntegrity } = setup({
+            checkIntegrity: async () => ({
+                flags: [{ code: 'not_on_booking', detail: 'Customer C-1042 is not a passenger on ZZ9999.' }],
+                checked: { duplicates: 0, booking: 'problem', purchase: 'before_departure' },
+            }),
+        });
+        await expect(run()).resolves.toMatchObject({ decision: 'REFER' });
+        expect(checkIntegrity).toHaveBeenCalledTimes(1);
+    });
+
+    it('refers the claim when the integrity checks themselves fail', async () => {
+        const { run } = setup({ checkIntegrity: async () => Promise.reject(new Error('db down')) });
+        await expect(run()).resolves.toMatchObject({
+            decision: 'REFER',
+            reasons: ['We could not run the integrity checks, so a person will review it.'],
+        });
     });
 
     it('asks for the policy number without running any agent when the policy does not exist', async () => {

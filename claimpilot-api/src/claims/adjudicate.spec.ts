@@ -214,4 +214,53 @@ describe('adjudicate: flight evidence', () => {
         };
         expect(adjudicate({ ...input, policyFindings: knownBefore }).decision).toBe('APPROVE');
     });
+
+    describe('integrity', () => {
+        it('rejects a claim for a flight already paid out', () => {
+            const outcome = adjudicate({
+                ...input,
+                integrity: {
+                    flags: [{ code: 'duplicate_paid', detail: 'Claim abc123 for this flight was already approved.' }],
+                    checked: { duplicates: 1, booking: 'matched', purchase: 'before_departure' },
+                },
+            });
+            expect(outcome.decision).toBe('REJECT');
+            expect(outcome.reasons[0]).toContain('already been paid');
+        });
+
+        it('refers other flags instead of rejecting, listing each one and citing the clause', () => {
+            const outcome = adjudicate({
+                ...input,
+                integrity: {
+                    flags: [
+                        {
+                            code: 'late_purchase',
+                            detail: 'Policy P-77 was bought after the flight was due to depart.',
+                            clauseId: '7.1',
+                        },
+                        { code: 'not_on_booking', detail: 'Customer C-1042 is not a passenger on ZZ9999.' },
+                    ],
+                    checked: { duplicates: 0, booking: 'problem', purchase: 'after_departure' },
+                },
+            });
+            expect(outcome).toMatchObject({
+                decision: 'REFER',
+                citations: [{ clauseId: '7.1' }],
+                evidencedDelayMinutes: 230,
+            });
+            expect(outcome.reasons).toHaveLength(3);
+        });
+
+        it('does not let a flag turn a rejection into a referral', () => {
+            const outcome = adjudicate({
+                ...input,
+                flight: flight('AI865'),
+                integrity: {
+                    flags: [{ code: 'not_on_booking', detail: 'x' }],
+                    checked: { duplicates: 0, booking: 'problem', purchase: 'before_departure' },
+                },
+            });
+            expect(outcome.decision).toBe('REJECT');
+        });
+    });
 });
