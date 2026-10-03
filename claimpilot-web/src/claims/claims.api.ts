@@ -110,6 +110,13 @@ export interface ClaimReview {
     decidedAt?: string;
 }
 
+/** Safety checks around the model: injection signals in the claim text and grounding of the summary. */
+export interface ClaimSafety {
+    injectionSuspected: boolean;
+    injectionSignals: string[];
+    summary?: { grounded: boolean; unsupported: string[]; replaced: boolean };
+}
+
 export interface Claim {
     id: string;
     customerId: string;
@@ -128,6 +135,7 @@ export interface Claim {
     /** Orchestrator's summary for the reviewer; informational only. */
     summary?: string;
     review?: ClaimReview;
+    safety?: ClaimSafety;
     createdAt: string;
 }
 

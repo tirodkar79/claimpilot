@@ -2,6 +2,7 @@ import { Agent } from '@mastra/core/agent';
 import type { MastraModelConfig } from '@mastra/core/llm';
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
+import { defuseFence } from '../safety/injection-detector';
 import { LANGUAGE_MODEL } from './language-model.provider';
 
 /** What the Intake agent must return. Every field is nullable: absent facts are never guessed. */
@@ -59,7 +60,7 @@ export class IntakeAgent {
      * @throws When the model fails or returns output that doesn't match the schema.
      */
     async extract(message: string, today: string): Promise<IntakeExtraction> {
-        const prompt = `Today is ${today}.\n\n<claim>\n${message}\n</claim>`;
+        const prompt = `Today is ${today}.\n\n<claim>\n${defuseFence(message)}\n</claim>`;
         const result = await this.agent.generate(prompt, { structuredOutput: { schema: intakeExtractionSchema } });
         return intakeExtractionSchema.parse(result.object);
     }

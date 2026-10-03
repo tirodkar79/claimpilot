@@ -36,6 +36,13 @@ export function ClaimTriagePage() {
                         <span className={styles.claimId}>claim {claimId.slice(-6)}</span>
                     </div>
                     <blockquote className={styles.message}>{claim.data?.message ?? '…'}</blockquote>
+                    {claim.data?.safety?.injectionSuspected && (
+                        <p className={styles.injection} role="status">
+                            Possible prompt injection (
+                            {claim.data.safety.injectionSignals.join(', ').replaceAll('_', ' ')}
+                            ). The text was treated as data only; the decision comes from the records and rules.
+                        </p>
+                    )}
                 </section>
                 <FactsCard facts={claim.data?.facts} />
                 <PolicyCard findings={claim.data?.evidence?.policy} policyId={claim.data?.policyId ?? ''} />
@@ -52,7 +59,11 @@ export function ClaimTriagePage() {
                     />
                 )}
                 {claim.data?.evidence?.integrity && <IntegrityCard findings={claim.data.evidence.integrity} />}
-                <OutcomeCard outcome={claim.data?.outcome} summary={claim.data?.summary} />
+                <OutcomeCard
+                    outcome={claim.data?.outcome}
+                    summary={claim.data?.summary}
+                    summaryCheck={claim.data?.safety?.summary}
+                />
                 {claim.data?.review && <ReviewCard review={claim.data.review} />}
             </div>
             <TraceLog events={stream.events} status={stream.status} error={stream.error} />

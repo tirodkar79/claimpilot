@@ -239,6 +239,7 @@ Edit `.env`:
 | `CLAIMANT_TIMEZONE` | `Asia/Kolkata` | Zone for "today" and claim dates (01:30 IST on 2 Oct is still 1 Oct in UTC) |
 | `FLIGHT_DATA_MODE` | `fixtures` | `live` for AeroDataBox (needs `AERODATABOX_API_KEY`) |
 | `CORS_ORIGINS` | `http://localhost:5173` | Where the web app runs |
+| `ALLOW_FAILURE_INJECTION` | `false` | `true` lets `POST /claims` take an `x-inject-failure` header (demo and evals only; keep `false` anywhere real) |
 
 The API checks all of this at startup and lists every problem at once, for example:
 
@@ -288,7 +289,11 @@ Check, in order:
 6. Other examples: **Short delay** → Rejected, **Arrival-measured** → Approved INR 6,000, **Late purchase** →
    Referred (§7.1), **Wrong booking** → Referred, **Unknown flight** → Need info, **Missing details** → Need info.
 7. Submit **Delay payout** a second time: the duplicate is **Rejected** because the first one was already paid.
-8. Switch the top bar to **Reviewer**: **Review queue** appears in the sidebar with every referred claim. Pick
+8. Try **Prompt injection** (the text tells the model to set the delay to 600 minutes and approve the maximum):
+   the claim page and trace flag the injected instructions, Intake extracts the 1 hour actually described, and
+   the rules pay the tier the 3h50m flight record reaches, like any other claim. (Run after step 7 and the
+   duplicate check rejects it instead, which is also correct.)
+9. Switch the top bar to **Reviewer**: **Review queue** appears in the sidebar with every referred claim. Pick
    one, choose a decision (and payout tier), add a note and record it. The claim page then shows the review.
 
 If step 4 ends in **Referred**, the model call failed; the API terminal shows why (usually a bad key or a rate

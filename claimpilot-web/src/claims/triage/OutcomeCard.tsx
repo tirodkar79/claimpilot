@@ -1,5 +1,5 @@
 import { AlertTriangle, CheckCircle2, HelpCircle, XCircle, type LucideIcon } from 'lucide-react';
-import type { ClaimDecision, ClaimOutcome } from '../claims.api';
+import type { ClaimDecision, ClaimOutcome, ClaimSafety } from '../claims.api';
 import styles from './triage.module.css';
 
 const PRESENTATION: Record<ClaimDecision, { label: string; tone: string; Icon: LucideIcon; lead: string }> = {
@@ -14,13 +14,15 @@ interface OutcomeCardProps {
     outcome?: ClaimOutcome;
     /** Orchestrator's summary. Shown as context; the rules engine made the decision. */
     summary?: string;
+    /** Grounding check of the summary; when `replaced`, the summary shown was built from the evidence. */
+    summaryCheck?: ClaimSafety['summary'];
 }
 
 /**
  * The decision, stamped, with its reasons and the policy clauses it relies on.
  * NEED_INFO reasons are the questions for the claimant.
  */
-export function OutcomeCard({ outcome, summary }: OutcomeCardProps) {
+export function OutcomeCard({ outcome, summary, summaryCheck }: OutcomeCardProps) {
     if (!outcome) {
         return (
             <section className={styles.card}>
@@ -60,8 +62,16 @@ export function OutcomeCard({ outcome, summary }: OutcomeCardProps) {
             )}
             {summary && (
                 <div className={styles.summary}>
-                    <div className={styles.eyebrow}>Orchestrator summary</div>
+                    <div className={styles.eyebrow}>
+                        {summaryCheck?.replaced ? 'Evidence summary' : 'Orchestrator summary'}
+                    </div>
                     <p>{summary}</p>
+                    {summaryCheck && summaryCheck.unsupported.length > 0 && (
+                        <p className={styles.grounding} role="status">
+                            The orchestrator's summary stated {summaryCheck.unsupported.join(', ')}, which the evidence
+                            doesn't support, so it was replaced.
+                        </p>
+                    )}
                 </div>
             )}
         </section>

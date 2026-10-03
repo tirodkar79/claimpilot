@@ -42,6 +42,15 @@
     line-height: 1.6;
 }
 
+.injection {
+    margin-top: 12px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--warn-bg);
+    color: var(--warn);
+    font-size: 12px;
+}
+
 .error {
     color: var(--bad);
 }

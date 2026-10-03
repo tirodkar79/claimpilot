@@ -40,3 +40,15 @@ export interface ClaimReview {
     /** Request id of the decision, linking it to the API logs. */
     requestId?: string;
 }
+
+/** Steps that `x-inject-failure` can make fail for one claim (when ALLOW_FAILURE_INJECTION=true). */
+export const FAILURE_TARGETS = ['intake', 'orchestrator', 'policy', 'flight', 'weather', 'integrity'] as const;
+export type FailureTarget = (typeof FAILURE_TARGETS)[number];
+
+/** Safety checks on a claim: prompt-injection signals and whether the stored summary was grounded. */
+export interface ClaimSafety {
+    injectionSuspected: boolean;
+    injectionSignals: string[];
+    /** Absent until triage writes a summary. */
+    summary?: { grounded: boolean; unsupported: string[]; replaced: boolean };
+}

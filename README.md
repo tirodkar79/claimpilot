@@ -118,7 +118,30 @@ POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► 
     (`POST /reviews/:claimId/decision`). The triage outcome is kept unchanged for the audit trail; the review
     holds the final say, and the decision is appended to the trace. A claim can only be decided once.
 11. Every step is a trace event. `GET /claims/:id/events` streams them; `GET /claims/:id` returns facts,
-   evidence, the outcome with cited clauses and payout, and the orchestrator's summary.
+   evidence, the outcome with cited clauses and payout, the orchestrator's summary and the safety checks.
+
+### Safety and grounding
+
+- **Prompt injection.** The claim text is wrapped in a `<claim>` fence for Intake, and any tag that could close
+  the fence is removed first. Intake has no tools and returns only a typed schema; every later agent sees those
+  facts, never the raw text; the decision is made by code from records. So an instruction in a claim can at most
+  bend the extracted facts, which the flight record and rules then check. A pattern scan (instruction overrides,
+  role markers, "approve the maximum", tags) flags suspicious text in the trace and on the claim page for the
+  reviewer. Detection is for visibility; safety doesn't depend on it.
+- **Grounded summary.** Every clause, flight number, time, date, amount and minute count in the orchestrator's
+  summary is checked against the evidence (local times only, so a UTC time quoted as local is caught). If any
+  value isn't supported, or there's no summary, it's replaced by one built from the evidence, and the trace
+  records what was rejected. The summary never affects the decision.
+- **Failure injection.** With `ALLOW_FAILURE_INJECTION=true`, `POST /claims` accepts
+  `x-inject-failure: intake,orchestrator,policy,flight,weather,integrity` (any subset) to make those steps fail
+  for that claim. Without the flag the header is refused with `400`. Used by tests and evals to show every
+  failure ends in REFER (or, for the orchestrator, recovery by the guard).
+
+```bash
+curl -X POST localhost:3000/claims -H 'x-api-key: dev-claimant-key' -H 'x-inject-failure: flight' \
+  -H 'content-type: application/json' \
+  -d '{"customerId":"C-1042","policyId":"P-77","message":"6E-2134 Mumbai to Delhi yesterday, 4 hours late"}'
+```
 
 ### Demo data (fictional)
 

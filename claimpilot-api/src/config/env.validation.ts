@@ -87,6 +87,11 @@ const envSchema = z
         OPEN_METEO_MCP_COMMAND: z.string().min(1).default('npx -y open-meteo-mcp-server'),
         /** Per-call budget for the weather MCP server; the first call also covers starting it. */
         WEATHER_TIMEOUT_MS: z.coerce.number().int().positive().default(20000),
+        /** Lets `x-inject-failure` make named agents fail, for demos and evals. Never enable in production. */
+        ALLOW_FAILURE_INJECTION: z
+            .enum(['true', 'false'])
+            .default('false')
+            .transform((value) => value === 'true'),
     })
     .superRefine((env, ctx) => {
         if (env.FLIGHT_DATA_MODE === 'live' && !env.AERODATABOX_API_KEY) {

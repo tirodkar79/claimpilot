@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { ClaimFacts } from './claim-facts';
 import type { Claim, ClaimEvidence } from './claim.schema';
 import { ClaimTriageService } from './claim-triage.service';
-import type { ClaimOutcome, ClaimReview, ClaimStatus } from './claims.constants';
+import type { ClaimOutcome, ClaimReview, ClaimSafety, ClaimStatus, FailureTarget } from './claims.constants';
 import { ClaimsRepository } from './claims.repository';
 import type { CreateClaimDto } from './create-claim.dto';
 
@@ -19,6 +19,7 @@ export interface ClaimView {
     evidence?: ClaimEvidence;
     summary?: string;
     review?: ClaimReview;
+    safety?: ClaimSafety;
     createdAt: string;
 }
 
@@ -34,10 +35,11 @@ export class ClaimsService {
     /**
      * Stores a claim and starts triage in the background; progress is followed via the event stream.
      * @param dto Validated request body.
+     * @param injectFailures Steps to force to fail (demo and eval use; already authorised by the controller).
      * @returns The new claim.
      */
-    async create(dto: CreateClaimDto): Promise<ClaimView> {
-        const claim = await this.claims.create({ ...dto, status: 'triaging' });
+    async create(dto: CreateClaimDto, injectFailures: FailureTarget[] = []): Promise<ClaimView> {
+        const claim = await this.claims.create({ ...dto, status: 'triaging', injectFailures });
         this.triage.run(claim).catch((error: unknown) => {
             this.logger.error(`Triage crashed for claim ${String(claim._id)}`, error);
         });
@@ -73,6 +75,7 @@ function toView(claim: Claim): ClaimView {
         evidence: claim.evidence,
         summary: claim.summary,
         review: claim.review,
+        safety: claim.safety,
         createdAt: claim.createdAt.toISOString(),
     };
 }

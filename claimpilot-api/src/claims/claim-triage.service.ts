@@ -10,13 +10,16 @@ import { EnvConfig } from '../config/env.validation';
 import { computeDelay } from '../flights/flight-delay';
 import { IntegrityService, type IntegrityFindings } from '../integrity/integrity.service';
 import { PoliciesRepository } from '../policies/policies.repository';
+import { scanForInjection } from '../safety/injection-detector';
+import { checkGrounding } from '../safety/summary-grounding';
 import type { Policy } from '../policies/policy.schema';
 import type { TraceActor } from '../trace/trace.constants';
 import { TraceService, type TraceRecorder } from '../trace/trace.service';
 import { adjudicate } from './adjudicate';
 import { findMissingInformation, normaliseFacts, type ClaimFacts } from './claim-facts';
+import { evidenceSummary, groundingAllowList } from './claim-summary';
 import type { Claim } from './claim.schema';
-import type { ClaimOutcome } from './claims.constants';
+import type { ClaimOutcome, ClaimSafety, FailureTarget } from './claims.constants';
 import { ClaimsRepository } from './claims.repository';
 
 const INTAKE_FAILED_REASON = 'We could not read the claim automatically, so a person will review it.';
@@ -122,12 +125,13 @@ export class ClaimTriageService {
         await recorder.record('intake', 'agent.started', 'Extracting facts from the claim');
         const startedAt = Date.now();
         try {
+            this.failIfInjected(claim, 'intake');
             const facts = normaliseFacts(await this.intake.extract(claim.message, today));
             await recorder.record('intake', 'agent.completed', 'Facts extracted', {
                 data: { facts },
                 durationMs: Date.now() - startedAt,
             });
-            await this.claims.updateById(String(claim._id), { facts });
+            await this.claims.updateById(String(claim._id), { facts, safety: await this.scanMessage(claim, recorder) });
             return facts;
         } catch (error) {
             this.logError('Intake', claim, error);
@@ -162,6 +166,7 @@ export class ClaimTriageService {
         const startedAt = Date.now();
         let summary: string | undefined;
         try {
+            this.failIfInjected(claim, 'orchestrator');
             summary = await this.orchestrator.run(facts, delegates, recorder);
             await recorder.record('orchestrator', 'agent.completed', 'Orchestrator finished', {
                 data: { summary },
@@ -191,6 +196,7 @@ export class ClaimTriageService {
         }
 
         const integrity = await this.checkIntegrity(run);
+        const grounded = await this.groundSummary(run, summary);
         await this.claims.updateById(String(claim._id), {
             evidence: {
                 policy: run.policyEvidence.result,
@@ -198,7 +204,8 @@ export class ClaimTriageService {
                 weather: run.weatherEvidence.result,
                 integrity: integrity ?? undefined,
             },
-            summary,
+            summary: grounded.summary,
+            'safety.summary': grounded.check,
         });
         const evidence = { policy: run.policyEvidence, flight: run.flightEvidence, weather: run.weatherEvidence };
         for (const agent of ['policy', 'flight', 'weather'] as const) {
@@ -227,6 +234,7 @@ export class ClaimTriageService {
     private async checkIntegrity(run: RunContext): Promise<IntegrityFindings | undefined | null> {
         if (!run.policy) return undefined;
         try {
+            this.failIfInjected(run.claim, 'integrity');
             return await this.integrity.check(
                 run.claim,
                 run.facts,
@@ -362,6 +370,7 @@ export class ClaimTriageService {
             await run.recorder.record(agent, 'agent.started', `${agent} agent started`, { data: { focus } });
             const startedAt = Date.now();
             try {
+                this.failIfInjected(run.claim, agent);
                 delegation.result = await work();
                 await run.recorder.record(agent, 'agent.completed', `${agent} agent finished`, {
                     data: { findings: delegation.result },
@@ -375,6 +384,65 @@ export class ClaimTriageService {
             return delegation.result;
         })();
         return delegation.pending;
+    }
+
+    /**
+     * Scans the raw claim text for prompt-injection signals and traces any found. The text was already
+     * fenced as data for Intake, so this is for visibility, not protection.
+     * @param claim Claim being triaged.
+     * @param recorder Trace recorder.
+     */
+    private async scanMessage(claim: Claim, recorder: TraceRecorder): Promise<ClaimSafety> {
+        const scan = scanForInjection(claim.message);
+        if (scan.suspected) {
+            await recorder.record(
+                'intake',
+                'checks.completed',
+                `Possible prompt injection (${scan.signals.join(', ')}); treated as data`,
+                {
+                    data: { signals: scan.signals },
+                },
+            );
+        }
+        return { injectionSuspected: scan.suspected, injectionSignals: scan.signals };
+    }
+
+    /**
+     * Keeps the orchestrator's summary only if every specific fact in it is in the evidence; otherwise (or if
+     * there is none) stores a summary built from the evidence, and traces why.
+     * @param run Current run.
+     * @param summary Orchestrator's summary, if it produced one.
+     */
+    private async groundSummary(run: RunContext, summary: string | undefined) {
+        const evidence = {
+            facts: run.facts,
+            policy: run.policy,
+            policyFindings: run.policyEvidence.result,
+            flight: run.flightEvidence.result,
+            weather: run.weatherEvidence.result,
+        };
+        if (!summary) {
+            return { summary: evidenceSummary(evidence), check: { grounded: true, unsupported: [], replaced: true } };
+        }
+        const result = checkGrounding(summary, groundingAllowList(evidence));
+        if (result.grounded) return { summary, check: { ...result, replaced: false } };
+
+        await run.recorder.record(
+            'orchestrator',
+            'guard.enforced',
+            `Summary stated ${result.unsupported.join(', ')} not found in the evidence; replaced with an evidence-based summary`,
+            { data: { rejectedSummary: summary, unsupported: result.unsupported } },
+        );
+        return { summary: evidenceSummary(evidence), check: { ...result, replaced: true } };
+    }
+
+    /**
+     * Throws when the claim asked for this step to fail (demo and eval use).
+     * @param claim Claim being triaged.
+     * @param target Step about to run.
+     */
+    private failIfInjected(claim: Claim, target: FailureTarget): void {
+        if (claim.injectFailures?.includes(target)) throw new Error(`Injected failure: ${target}`);
     }
 
     /**

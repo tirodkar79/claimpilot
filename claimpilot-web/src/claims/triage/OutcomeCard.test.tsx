@@ -45,6 +45,18 @@ describe('OutcomeCard', () => {
         expect(screen.getByText('Policy P-12 ended before the flight.')).toBeInTheDocument();
     });
 
+    it('says when the orchestrator summary was replaced, and why', () => {
+        render(
+            <OutcomeCard
+                outcome={{ decision: 'REFER', reasons: ['A person will review it.'], citations: [] }}
+                summary="Policy P-77 measures delay from departure."
+                summaryCheck={{ grounded: false, unsupported: ['time 05:05'], replaced: true }}
+            />,
+        );
+        expect(screen.getByText('Evidence summary')).toBeInTheDocument();
+        expect(screen.getByRole('status')).toHaveTextContent('stated time 05:05');
+    });
+
     it('stamps an approval with the payout tier', () => {
         render(
             <OutcomeCard
