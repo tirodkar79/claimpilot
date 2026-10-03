@@ -1,5 +1,5 @@
 /** Who produced a trace event. Grows as sub-agents are added. */
-export const TRACE_ACTORS = ['orchestrator', 'intake', 'policy'] as const;
+export const TRACE_ACTORS = ['orchestrator', 'intake', 'policy', 'flight'] as const;
 export type TraceActor = (typeof TRACE_ACTORS)[number];
 
 export const TRACE_EVENT_TYPES = [
@@ -11,7 +11,7 @@ export const TRACE_EVENT_TYPES = [
     'agent.delegated',
     /** An agent called one of its tools. */
     'tool.called',
-    /** Code stepped in because the orchestrator skipped a required step. */
+    /** Code stepped in because an agent skipped a required step. */
     'guard.enforced',
     'decision',
     'triage.completed',

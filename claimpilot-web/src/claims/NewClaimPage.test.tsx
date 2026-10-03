@@ -31,7 +31,7 @@ describe('NewClaimPage', () => {
         vi.mocked(createClaim).mockResolvedValue({ id: 'abc123' } as never);
         const router = renderPage();
 
-        await userEvent.click(screen.getByRole('button', { name: 'Complete claim' }));
+        await userEvent.click(screen.getByRole('button', { name: 'Delay payout' }));
         await userEvent.click(screen.getByRole('button', { name: /Run triage/ }));
 
         expect(await screen.findByText('claim page')).toBeInTheDocument();

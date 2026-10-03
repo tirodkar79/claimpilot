@@ -262,3 +262,76 @@
 .logGuard {
     color: var(--warn);
 }
+
+.ok {
+    color: var(--ok);
+}
+
+.payout {
+    font-family: var(--font-display);
+    font-size: 34px;
+    line-height: 1.1;
+}
+
+.statusOk,
+.statusBad {
+    padding: 2px 8px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.statusOk {
+    background: var(--ok-bg);
+    color: var(--ok);
+}
+
+.statusBad {
+    background: var(--bad-bg);
+    color: var(--bad);
+}
+
+/* Delay timeline */
+.timeline {
+    display: block;
+    width: 100%;
+    height: auto;
+}
+
+.tlTrack {
+    fill: var(--sunken);
+}
+
+.tlEvidence {
+    fill: var(--accent);
+}
+
+.tlClaimed {
+    fill: none;
+    stroke: var(--amber);
+    stroke-width: 1.5;
+    stroke-dasharray: 4 3;
+}
+
+.tlTier {
+    stroke: var(--ink-2);
+    stroke-width: 1;
+    stroke-dasharray: 2 3;
+}
+
+.tlLabel {
+    fill: var(--ink-2);
+    font-size: 11px;
+}
+
+.tlOnBar {
+    fill: var(--accent-ink);
+    font-size: 11px;
+    font-weight: 600;
+}
+
+.tlAxis {
+    fill: var(--muted);
+    font-family: var(--font-mono);
+    font-size: 10.5px;
+}

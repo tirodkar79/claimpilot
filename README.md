@@ -63,31 +63,63 @@ See **[SETUP.md](SETUP.md)** for getting API keys, free-tier limits and which pr
 ## How a claim flows (so far)
 
 ```
-POST /claims ─► Intake agent ─► completeness check ─► Orchestrator agent ─► Policy agent ─► guard ─► rules engine
-                (raw text, no    (missing → NEED_INFO,  (LLM; delegates via  (clause search,  (runs required   (decides; cites
-                 tools)           no other agent runs)   tools, no data)      ≤3 searches)     checks it skipped) clauses)
+POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► Policy agent ─┬─► guard ─► rules engine
+                (raw text,  (missing →      (LLM; only     └─► Flight agent ─┘   (runs      (decides from
+                 no tools)   NEED_INFO)      delegation                          skipped     evidence; cites
+                                             tools)                              agents)     clauses)
 ```
 
 1. `POST /claims` (claimant role) stores the claim and returns `202` straight away.
 2. The **Intake agent** turns the free-text message into typed facts. It is the only agent that sees the raw
    text and it has no tools, so instructions hidden in a claim can't trigger anything.
 3. Missing flight number, date or delay → **NEED_INFO** with questions, without calling any other agent.
-4. The **Orchestrator agent** (LLM) decides whom to consult. Its only tools are delegations to sub-agents, so
-   everything it knows comes through them, and every delegation is traced.
-5. The **Policy agent** reads the policy wording through a clause-search tool bound to that one policy (at most
-   3 searches, enforced in code). It reports how delay is measured and which exclusions the claimed cause
-   might trigger. Code then drops any clause it cites that doesn't exist and keeps the schedule's values for
-   anything numeric.
-6. A **guard** runs the Policy agent itself if the orchestrator skipped it or failed, so a model mistake can't
-   skip a required check. Evals will count how often the guard had to step in.
-7. The **rules engine** (`adjudicate`, plain code) decides from evidence: unknown policy → NEED_INFO, policy
-   held by someone else → REFER, flight outside cover or claim past the deadline → REJECT with the clause,
-   otherwise PENDING until flight evidence lands. A failed agent → REFER to a human.
-8. Every step is a trace event. `GET /claims/:id/events` streams them (server-sent events); `GET /claims/:id`
-   returns facts, policy findings, the outcome with cited clauses, and the orchestrator's summary.
+4. The **Orchestrator agent** (LLM) decides whom to consult; it usually calls both sub-agents in parallel. Its
+   only tools are delegations, so everything it knows comes through them, and every delegation is traced.
+5. The **Policy agent** reads the wording through a clause search bound to that one policy (≤ 3 searches,
+   enforced in code). It reports how delay is measured and which exclusions the claimed cause might
+   trigger. Code drops citations to clauses that don't exist.
+6. The **Flight agent** looks the flight up through a tool bound to the claimed flight number and to dates
+   within a day of the claimed date (≤ 2 lookups). It picks the leg matching the claimed route; code accepts
+   the pick only if that leg was really returned, and computes the delay itself.
+7. A **guard** runs any required agent the orchestrator skipped or that failed to start, so a model mistake
+   can't skip a check. Evals will count how often it stepped in.
+8. The **rules engine** (`adjudicate`, plain code) decides, first failing check wins:
 
-Demo policies (fictional, seeded on startup): **P-77** SkyGuard Standard (C-1042, excludes severe weather),
-**P-91** SkyGuard Plus (C-2077, covers weather, measures arrival delay), **P-12** expired 2025 policy (C-1042).
+   | Check | Outcome |
+   |---|---|
+   | Policy doesn't exist | NEED_INFO |
+   | Policy held by someone else | REFER |
+   | Flight outside cover, or claim past the deadline | REJECT (cites clause) |
+   | No flight record | NEED_INFO (confirm number and date) |
+   | Cancelled, or no actual time yet | REFER |
+   | Delay (measured the policy's way) below every tier | REJECT (cites measure and tiers) |
+   | Weather or strike exclusion could apply | REFER until the weather phase |
+   | Otherwise | **APPROVE** the tier the record reaches, which may be lower than claimed |
+
+   Any agent failure → REFER to a human.
+9. Every step is a trace event. `GET /claims/:id/events` streams them; `GET /claims/:id` returns facts,
+   evidence, the outcome with cited clauses and payout, and the orchestrator's summary.
+
+### Demo data (fictional)
+
+| Policy | Holder | Notes |
+|---|---|---|
+| P-77 SkyGuard Standard | C-1042 | Delay from departure; 2h ₹2,000 · 4h ₹5,000 · 6h ₹10,000; excludes severe weather |
+| P-91 SkyGuard Plus | C-2077 | Delay from **arrival**; 90m ₹3,000 · 3h ₹6,000; covers weather |
+| P-12 SkyGuard Standard | C-1042 | Expired 2025 |
+
+| Recorded flight | Route | What it shows |
+|---|---|---|
+| 6E2134 | BOM → DEL | 3h50m late: pays the 2h tier even if 4h is claimed |
+| AI865 | BOM → DEL | 1h20m late: below every tier |
+| UK951 | DEL → BOM | 6h40m late: top tier |
+| QP1303 | BOM → GOI | 1h40m late leaving, 3h10m late arriving: depends on the policy's measure |
+| 6E6187 | HYD → DEL → SXR | Two legs: the claimed route picks the leg |
+| SG160 | BOM → DEL | Cancelled |
+| 6E2314 | — | No record (typo of 6E2134) |
+
+Recorded flights apply to any date, so demos and evals keep working. Set `FLIGHT_DATA_MODE=live` for real
+AeroDataBox lookups (see [SETUP.md](SETUP.md)). The **New claim** screen has one example per scenario.
 
 ## Tests, lint and formatting
 

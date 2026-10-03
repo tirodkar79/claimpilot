@@ -8,29 +8,69 @@ import styles from './NewClaimPage.module.css';
 
 const EMPTY: CreateClaimRequest = { customerId: '', policyId: '', bookingRef: '', message: '' };
 
-/** Prefilled claims for demos: one complete, one missing the date and delay. */
-const EXAMPLES: { label: string; claim: CreateClaimRequest }[] = [
-    {
-        label: 'Complete claim',
-        claim: {
-            customerId: 'C-1042',
-            policyId: 'P-77',
-            bookingRef: 'XK9P2L',
-            message:
-                'My flight 6E-2134 from Mumbai to Delhi on 12 Sep was delayed 4 hours because of fog. ' +
-                'I want to claim the delay benefit.',
+/**
+ * A recent date as written in a claim, e.g. "27 Sep", so the examples stay inside cover and deadlines.
+ * @param days How many days ago.
+ */
+function daysAgo(days: number): string {
+    const date = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
+    return new Intl.DateTimeFormat('en-GB', { day: 'numeric', month: 'short' }).format(date);
+}
+
+/**
+ * Example claims, one per demo scenario (recorded flight data backs each one).
+ * @param flightDay Date phrase used in the messages.
+ */
+function examples(flightDay: string): { label: string; claim: CreateClaimRequest }[] {
+    const standard = { customerId: 'C-1042', policyId: 'P-77', bookingRef: 'XK9P2L' };
+    return [
+        {
+            label: 'Delay payout',
+            claim: {
+                ...standard,
+                message: `My flight 6E-2134 from Mumbai to Delhi on ${flightDay} was delayed 4 hours because of a technical fault.`,
+            },
         },
-    },
-    {
-        label: 'Missing details',
-        claim: {
-            customerId: 'C-1042',
-            policyId: 'P-77',
-            bookingRef: '',
-            message: 'My IndiGo flight to Delhi was badly delayed and I missed a meeting. Please compensate me.',
+        {
+            label: 'Fog (exclusion)',
+            claim: {
+                ...standard,
+                message: `Flight 6E-2134 Mumbai to Delhi on ${flightDay} was 4 hours late due to dense fog.`,
+            },
         },
-    },
-];
+        {
+            label: 'Short delay',
+            claim: {
+                ...standard,
+                message: `AI 865 from Mumbai to Delhi on ${flightDay} was delayed about 2 hours, crew shortage.`,
+            },
+        },
+        {
+            label: 'Arrival-measured',
+            claim: {
+                customerId: 'C-2077',
+                policyId: 'P-91',
+                bookingRef: 'QP7Y4M',
+                message: `Akasa QP1303 Mumbai to Goa on ${flightDay}, we landed more than 3 hours late. Technical issue.`,
+            },
+        },
+        {
+            label: 'Unknown flight',
+            claim: {
+                ...standard,
+                message: `My flight 6E-2314 from Mumbai to Delhi on ${flightDay} was delayed 5 hours.`,
+            },
+        },
+        {
+            label: 'Missing details',
+            claim: {
+                ...standard,
+                bookingRef: '',
+                message: 'My IndiGo flight to Delhi was badly delayed and I missed a meeting. Please compensate me.',
+            },
+        },
+    ];
+}
 
 /** Claim submission form. On success it opens the live triage view of the new claim. */
 export function NewClaimPage() {
@@ -66,7 +106,7 @@ export function NewClaimPage() {
 
             <div className={styles.examples}>
                 <span className={styles.label}>Load an example</span>
-                {EXAMPLES.map((example) => (
+                {examples(daysAgo(3)).map((example) => (
                     <button
                         key={example.label}
                         type="button"

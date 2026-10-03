@@ -1,11 +1,8 @@
 export const CLAIM_STATUSES = ['triaging', 'completed'] as const;
 export type ClaimStatus = (typeof CLAIM_STATUSES)[number];
 
-/**
- * Outcomes available so far. APPROVE arrives with flight evidence; until then a claim that passes the
- * policy checks is PENDING, and any failure is REFERred to a human rather than guessed.
- */
-export const CLAIM_DECISIONS = ['NEED_INFO', 'PENDING', 'REJECT', 'REFER'] as const;
+/** Possible outcomes. Anything uncertain, and any failure, is REFERred to a human rather than guessed. */
+export const CLAIM_DECISIONS = ['APPROVE', 'REJECT', 'REFER', 'NEED_INFO'] as const;
 export type ClaimDecision = (typeof CLAIM_DECISIONS)[number];
 
 export interface ClauseCitation {
@@ -19,4 +16,8 @@ export interface ClaimOutcome {
     reasons: string[];
     /** Policy clauses the decision relies on. */
     citations: ClauseCitation[];
+    /** Present on APPROVE: the tier the recorded delay reaches. */
+    payout?: { amount: number; currency: string; minDelayMinutes: number };
+    /** Delay from the flight record, measured the way the policy defines it. */
+    evidencedDelayMinutes?: number;
 }

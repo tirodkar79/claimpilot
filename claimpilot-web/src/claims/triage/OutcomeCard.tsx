@@ -1,10 +1,10 @@
-import { AlertTriangle, Clock, HelpCircle, XCircle, type LucideIcon } from 'lucide-react';
+import { AlertTriangle, CheckCircle2, HelpCircle, XCircle, type LucideIcon } from 'lucide-react';
 import type { ClaimDecision, ClaimOutcome } from '../claims.api';
 import styles from './triage.module.css';
 
 const PRESENTATION: Record<ClaimDecision, { label: string; tone: string; Icon: LucideIcon; lead: string }> = {
+    APPROVE: { label: 'Approved', tone: styles.ok, Icon: CheckCircle2, lead: '' },
     NEED_INFO: { label: 'Need info', tone: styles.info, Icon: HelpCircle, lead: 'We need a few more details:' },
-    PENDING: { label: 'Pending evidence', tone: styles.neutral, Icon: Clock, lead: '' },
     REJECT: { label: 'Rejected', tone: styles.bad, Icon: XCircle, lead: '' },
     REFER: { label: 'Referred', tone: styles.warn, Icon: AlertTriangle, lead: '' },
 };
@@ -37,6 +37,12 @@ export function OutcomeCard({ outcome, summary }: OutcomeCardProps) {
                 <Icon size={15} strokeWidth={2} />
                 {label}
             </span>
+            {outcome.payout && (
+                <p className={styles.payout}>
+                    {outcome.payout.currency} {outcome.payout.amount.toLocaleString('en-IN')}{' '}
+                    <span className={styles.missing}>· {outcome.payout.minDelayMinutes / 60}h+ tier</span>
+                </p>
+            )}
             {lead && <p className={styles.lead}>{lead}</p>}
             <ul className={styles.reasons}>
                 {outcome.reasons.map((reason) => (

@@ -44,4 +44,21 @@ describe('OutcomeCard', () => {
         expect(screen.getByText('§2.1 Period of cover')).toBeInTheDocument();
         expect(screen.getByText('Policy P-12 ended before the flight.')).toBeInTheDocument();
     });
+
+    it('stamps an approval with the payout tier', () => {
+        render(
+            <OutcomeCard
+                outcome={{
+                    decision: 'APPROVE',
+                    reasons: ['The flight record shows a departure delay of 3h 50m, which meets the 2h 00m tier.'],
+                    citations: [{ clauseId: '4.2', title: 'Delay benefit' }],
+                    payout: { amount: 2000, currency: 'INR', minDelayMinutes: 120 },
+                    evidencedDelayMinutes: 230,
+                }}
+            />,
+        );
+        expect(screen.getByText('Approved')).toBeInTheDocument();
+        expect(screen.getByText(/INR 2,000/)).toBeInTheDocument();
+        expect(screen.getByText('· 2h+ tier')).toBeInTheDocument();
+    });
 });

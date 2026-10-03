@@ -53,6 +53,24 @@ describe('validateEnv', () => {
         expect(() => validateEnv({ ...required, MODEL: 'openai:gpt' })).toThrow(/MODEL: must be/);
     });
 
+    it('defaults to IST and recorded flight data', () => {
+        expect(validateEnv(required)).toMatchObject({
+            CLAIMANT_TIMEZONE: 'Asia/Kolkata',
+            FLIGHT_DATA_MODE: 'fixtures',
+        });
+    });
+
+    it('rejects an unknown time zone', () => {
+        expect(() => validateEnv({ ...required, CLAIMANT_TIMEZONE: 'Mars/Olympus' })).toThrow(/CLAIMANT_TIMEZONE/);
+    });
+
+    it('requires an AeroDataBox key only in live mode', () => {
+        expect(() => validateEnv({ ...required, FLIGHT_DATA_MODE: 'live' })).toThrow(/AERODATABOX_API_KEY: required/);
+        expect(validateEnv({ ...required, FLIGHT_DATA_MODE: 'live', AERODATABOX_API_KEY: 'k' }).FLIGHT_DATA_MODE).toBe(
+            'live',
+        );
+    });
+
     it('lists every missing variable at once', () => {
         expect(() => validateEnv({})).toThrow(/MONGO_URI[\s\S]*API_KEYS/);
     });

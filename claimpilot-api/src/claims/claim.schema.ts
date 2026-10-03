@@ -1,11 +1,13 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
+import type { FlightFindings } from '../agents/flight.agent';
 import type { PolicyFindings } from '../agents/policy.agent';
 import type { ClaimFacts } from './claim-facts';
 import { CLAIM_STATUSES, type ClaimOutcome, type ClaimStatus } from './claims.constants';
 
 export interface ClaimEvidence {
     policy?: PolicyFindings;
+    flight?: FlightFindings;
 }
 
 @Schema({ collection: 'claims', timestamps: true, versionKey: false })

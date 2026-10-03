@@ -28,7 +28,11 @@ describe('OrchestratorAgent', () => {
             },
         };
 
-        const summary = await new OrchestratorAgent(model).run(facts, { consultPolicy }, recorder);
+        const summary = await new OrchestratorAgent(model).run(
+            facts,
+            { consultPolicy, consultFlight: jest.fn() },
+            recorder,
+        );
 
         expect(summary).toBe('Policy P-77 covers the flight; fog may be excluded.');
         expect(consultPolicy).toHaveBeenCalledWith('cover and exclusions');
@@ -38,7 +42,11 @@ describe('OrchestratorAgent', () => {
     it('fails loudly on an empty answer rather than storing a blank summary', async () => {
         const model = mockLanguageModel('   ');
         await expect(
-            new OrchestratorAgent(model).run(facts, { consultPolicy: jest.fn() }, { record: jest.fn() }),
+            new OrchestratorAgent(model).run(
+                facts,
+                { consultPolicy: jest.fn(), consultFlight: jest.fn() },
+                { record: jest.fn() },
+            ),
         ).rejects.toThrow('empty summary');
     });
 
@@ -48,7 +56,11 @@ describe('OrchestratorAgent', () => {
             call.toolNames.forEach((name) => offered.add(name));
             return { text: 'Nothing to check.' };
         });
-        await new OrchestratorAgent(model).run(facts, { consultPolicy: jest.fn() }, { record: jest.fn() });
-        expect([...offered]).toEqual(['consultPolicyAgent']);
+        await new OrchestratorAgent(model).run(
+            facts,
+            { consultPolicy: jest.fn(), consultFlight: jest.fn() },
+            { record: jest.fn() },
+        );
+        expect([...offered].sort()).toEqual(['consultFlightAgent', 'consultPolicyAgent']);
     });
 });

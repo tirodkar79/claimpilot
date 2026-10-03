@@ -2,7 +2,7 @@ import { httpClient } from '../api/http-client';
 
 /** Mirrors the API's ClaimView, ClaimFacts, ClaimOutcome and PolicyFindings (claimpilot-api/src). */
 export type ClaimStatus = 'triaging' | 'completed';
-export type ClaimDecision = 'NEED_INFO' | 'PENDING' | 'REJECT' | 'REFER';
+export type ClaimDecision = 'APPROVE' | 'REJECT' | 'REFER' | 'NEED_INFO';
 
 export interface ClaimFacts {
     flightNumber: string | null;
@@ -22,6 +22,31 @@ export interface ClaimOutcome {
     decision: ClaimDecision;
     reasons: string[];
     citations: ClauseCitation[];
+    payout?: { amount: number; currency: string; minDelayMinutes: number };
+    /** Delay from the flight record, measured the way the policy defines it. */
+    evidencedDelayMinutes?: number;
+}
+
+export interface FlightLeg {
+    flightNumber: string;
+    status: 'scheduled' | 'departed' | 'landed' | 'cancelled' | 'diverted' | 'unknown';
+    origin: { iata: string; timeZone: string };
+    destination: { iata: string; timeZone: string };
+    scheduledDeparture: string;
+    scheduledArrival: string;
+    actualDeparture?: string;
+    actualArrival?: string;
+}
+
+/** Flight agent result after the API checked its choice (claimpilot-api/src/agents/flight.agent.ts). */
+export interface FlightFindings {
+    flightNumber: string;
+    claimedDate: string;
+    leg?: FlightLeg;
+    source?: 'recorded' | 'aerodatabox';
+    selectedBy?: 'agent' | 'code';
+    notes: string;
+    lookups: { date: string; legs: number }[];
 }
 
 export interface PolicyClause {
@@ -50,7 +75,7 @@ export interface Claim {
     status: ClaimStatus;
     facts?: ClaimFacts;
     outcome?: ClaimOutcome;
-    evidence?: { policy?: PolicyFindings };
+    evidence?: { policy?: PolicyFindings; flight?: FlightFindings };
     /** Orchestrator's summary for the reviewer; informational only. */
     summary?: string;
     createdAt: string;

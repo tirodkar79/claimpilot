@@ -1,11 +1,15 @@
 import { Injectable, Logger } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import { FlightAgent, type FlightFindings } from '../agents/flight.agent';
 import { IntakeAgent } from '../agents/intake.agent';
-import { OrchestratorAgent } from '../agents/orchestrator.agent';
+import { OrchestratorAgent, type OrchestratorDelegates } from '../agents/orchestrator.agent';
 import { PolicyAgent, type PolicyFindings } from '../agents/policy.agent';
+import { localDate, localDateTime } from '../common/utils/local-date';
+import { EnvConfig } from '../config/env.validation';
 import { PoliciesRepository } from '../policies/policies.repository';
 import type { Policy } from '../policies/policy.schema';
-import type { TraceRecorder } from '../trace/trace.service';
-import { TraceService } from '../trace/trace.service';
+import type { TraceActor } from '../trace/trace.constants';
+import { TraceService, type TraceRecorder } from '../trace/trace.service';
 import { adjudicate } from './adjudicate';
 import { findMissingInformation, normaliseFacts, type ClaimFacts } from './claim-facts';
 import type { Claim } from './claim.schema';
@@ -13,41 +17,59 @@ import type { ClaimOutcome } from './claims.constants';
 import { ClaimsRepository } from './claims.repository';
 
 const INTAKE_FAILED_REASON = 'We could not read the claim automatically, so a person will review it.';
-const POLICY_FAILED_REASON = 'We could not check the policy automatically, so a person will review it.';
+const AGENT_FAILED_REASON: Record<'policy' | 'flight', string> = {
+    policy: 'We could not check the policy automatically, so a person will review it.',
+    flight: 'We could not check the flight record automatically, so a person will review it.',
+};
 
-/** Evidence gathered during one run. Filled by delegations; read by the rules engine. */
-interface RunEvidence {
-    policy?: PolicyFindings;
-    policyFailed: boolean;
+/** One sub-agent's result within a run: filled once, then reused by repeat delegations. */
+interface Delegation<T> {
+    result?: T;
+    failed: boolean;
+}
+
+/** Everything one run needs to share between the orchestrator's delegations and the guard. */
+interface RunContext {
+    claim: Claim;
+    facts: ClaimFacts;
+    policy: Policy | null;
+    recorder: TraceRecorder;
+    policyEvidence: Delegation<PolicyFindings>;
+    flightEvidence: Delegation<FlightFindings>;
 }
 
 /**
  * Runs a claim's triage and records every step in the trace.
  *
  * Intake (code-invoked, quarantined) → completeness check → LLM orchestrator, which delegates to the
- * Policy agent → guard (runs required checks the orchestrator skipped) → rules engine decides.
+ * Policy and Flight agents → guard (runs required agents the orchestrator skipped) → rules engine decides.
  * Model output never decides the outcome; failures end in REFER rather than a guess.
  */
 @Injectable()
 export class ClaimTriageService {
     private readonly logger = new Logger(ClaimTriageService.name);
+    private readonly timeZone: string;
 
     constructor(
+        config: ConfigService<EnvConfig, true>,
         private readonly claims: ClaimsRepository,
         private readonly policies: PoliciesRepository,
         private readonly intake: IntakeAgent,
         private readonly orchestrator: OrchestratorAgent,
         private readonly policyAgent: PolicyAgent,
+        private readonly flightAgent: FlightAgent,
         private readonly trace: TraceService,
-    ) {}
+    ) {
+        this.timeZone = config.get('CLAIMANT_TIMEZONE', { infer: true });
+    }
 
     /**
      * Runs triage for a stored claim. Never throws: failures are traced and become REFER.
      * @param claim Claim to triage.
-     * @param today Today's date (YYYY-MM-DD); injectable for tests.
+     * @param today Today's date in the claimant's time zone (YYYY-MM-DD); injectable for tests.
      * @returns The outcome that was stored.
      */
-    async run(claim: Claim, today = new Date().toISOString().slice(0, 10)): Promise<ClaimOutcome> {
+    async run(claim: Claim, today = localDate(new Date(), this.timeZone)): Promise<ClaimOutcome> {
         const claimId = String(claim._id);
         const recorder = this.trace.forClaim(claimId);
         await recorder.record('orchestrator', 'triage.started', 'Triage started');
@@ -60,7 +82,7 @@ export class ClaimTriageService {
             const missing = findMissingInformation(facts, today);
             outcome = missing.length
                 ? { decision: 'NEED_INFO', reasons: missing.map((item) => item.question), citations: [] }
-                : await this.assessCoverage(claim, facts, recorder);
+                : await this.assess(claim, facts, recorder);
         }
 
         await recorder.record('orchestrator', 'decision', outcome.decision, { data: { outcome } });
@@ -95,21 +117,30 @@ export class ClaimTriageService {
     }
 
     /**
-     * Lets the orchestrator delegate, enforces required checks, then applies the rules engine.
+     * Lets the orchestrator delegate, enforces the required agents, then applies the rules engine.
      * @param claim Claim being triaged.
      * @param facts Complete facts.
      * @param recorder Trace recorder.
      */
-    private async assessCoverage(claim: Claim, facts: ClaimFacts, recorder: TraceRecorder): Promise<ClaimOutcome> {
-        const policy = await this.policies.findByPolicyId(claim.policyId);
-        const evidence: RunEvidence = { policyFailed: false };
-        const consultPolicy = (focus: string) => this.consultPolicy(claim, policy, facts, evidence, recorder, focus);
+    private async assess(claim: Claim, facts: ClaimFacts, recorder: TraceRecorder): Promise<ClaimOutcome> {
+        const run: RunContext = {
+            claim,
+            facts,
+            policy: await this.policies.findByPolicyId(claim.policyId),
+            recorder,
+            policyEvidence: { failed: false },
+            flightEvidence: { failed: false },
+        };
+        const delegates: OrchestratorDelegates = {
+            consultPolicy: (focus) => this.consultPolicy(run, focus),
+            consultFlight: (focus) => this.consultFlight(run, focus),
+        };
 
         await recorder.record('orchestrator', 'agent.started', 'Planning which agents to consult');
         const startedAt = Date.now();
         let summary: string | undefined;
         try {
-            summary = await this.orchestrator.run(facts, { consultPolicy }, recorder);
+            summary = await this.orchestrator.run(facts, delegates, recorder);
             await recorder.record('orchestrator', 'agent.completed', 'Orchestrator finished', {
                 data: { summary },
                 durationMs: Date.now() - startedAt,
@@ -119,63 +150,49 @@ export class ClaimTriageService {
             await recorder.record('orchestrator', 'agent.failed', 'Orchestrator failed; running required checks');
         }
 
-        if (policy && !evidence.policy && !evidence.policyFailed) {
+        // Guard: required agents run even if the orchestrator skipped them or failed.
+        if (run.policy && !run.policyEvidence.result && !run.policyEvidence.failed) {
             await recorder.record('orchestrator', 'guard.enforced', 'Policy agent was not consulted; running it');
-            await consultPolicy('Required policy check');
+            await delegates.consultPolicy('Required policy check');
+        }
+        if (run.policy && !run.flightEvidence.result && !run.flightEvidence.failed) {
+            await recorder.record('orchestrator', 'guard.enforced', 'Flight agent was not consulted; running it');
+            await delegates.consultFlight('Required flight check');
         }
 
-        await this.claims.updateById(String(claim._id), { evidence: { policy: evidence.policy }, summary });
-        if (evidence.policyFailed) {
-            return { decision: 'REFER', reasons: [POLICY_FAILED_REASON], citations: [] };
+        await this.claims.updateById(String(claim._id), {
+            evidence: { policy: run.policyEvidence.result, flight: run.flightEvidence.result },
+            summary,
+        });
+        for (const agent of ['policy', 'flight'] as const) {
+            if ((agent === 'policy' ? run.policyEvidence : run.flightEvidence).failed) {
+                return { decision: 'REFER', reasons: [AGENT_FAILED_REASON[agent]], citations: [] };
+            }
         }
         return adjudicate({
             facts,
-            policy,
+            policy: run.policy,
             policyId: claim.policyId,
             customerId: claim.customerId,
-            submittedOn: claim.createdAt.toISOString().slice(0, 10),
+            submittedOn: localDate(claim.createdAt, this.timeZone),
+            policyFindings: run.policyEvidence.result,
+            flight: run.flightEvidence.result,
         });
     }
 
     /**
-     * Delegation target for the orchestrator. Runs the Policy agent once per claim; repeat calls get
-     * the same findings. Returns a compact briefing, not the full clause text.
-     * @param claim Claim being triaged.
-     * @param policy Policy, or null when the id doesn't exist.
-     * @param facts Claim facts.
-     * @param evidence Evidence of this run (mutated).
-     * @param recorder Trace recorder.
+     * Delegation target: the Policy agent. Returns a compact briefing, not the full clause text.
+     * @param run Current run.
      * @param focus What the orchestrator asked for.
      */
-    private async consultPolicy(
-        claim: Claim,
-        policy: Policy | null,
-        facts: ClaimFacts,
-        evidence: RunEvidence,
-        recorder: TraceRecorder,
-        focus: string,
-    ): Promise<Record<string, unknown>> {
-        if (!policy) return { found: false, message: `No policy ${claim.policyId} exists.` };
-        if (evidence.policyFailed) return { error: 'The Policy agent is unavailable.' };
+    private async consultPolicy(run: RunContext, focus: string): Promise<Record<string, unknown>> {
+        const { policy } = run;
+        if (!policy) return { found: false, message: `No policy ${run.claim.policyId} exists.` };
 
-        if (!evidence.policy) {
-            await recorder.record('policy', 'agent.started', `Reading policy ${policy.policyId}`, { data: { focus } });
-            const startedAt = Date.now();
-            try {
-                evidence.policy = await this.policyAgent.assess(policy, facts, recorder);
-                await recorder.record('policy', 'agent.completed', 'Policy read', {
-                    data: { findings: evidence.policy },
-                    durationMs: Date.now() - startedAt,
-                });
-            } catch (error) {
-                this.logError('Policy', claim, error);
-                evidence.policyFailed = true;
-                await recorder.record('policy', 'agent.failed', 'Policy agent failed');
-                return { error: 'The Policy agent is unavailable.' };
-            }
-        }
-
-        const findings = evidence.policy;
+        const findings = await this.runOnce('policy', run.policyEvidence, run, focus, () =>
+            this.policyAgent.assess(policy, run.facts, run.recorder),
+        );
+        if (!findings) return { error: 'The Policy agent is unavailable.' };
         return {
             found: true,
             product: policy.product,
@@ -185,6 +202,67 @@ export class ClaimTriageService {
             relevantExclusions: findings.relevantExclusions,
             summary: findings.summary,
         };
+    }
+
+    /**
+     * Delegation target: the Flight evidence agent. Returns what was found, without computing payouts.
+     * @param run Current run.
+     * @param focus What the orchestrator asked for.
+     */
+    private async consultFlight(run: RunContext, focus: string): Promise<Record<string, unknown>> {
+        // Without a policy the outcome is NEED_INFO regardless, so don't spend a model call or a lookup.
+        if (!run.policy) return { skipped: true, message: `No policy ${run.claim.policyId} exists to check against.` };
+        const findings = await this.runOnce('flight', run.flightEvidence, run, focus, () =>
+            this.flightAgent.investigate(run.facts, run.recorder),
+        );
+        if (!findings) return { error: 'The Flight agent is unavailable.' };
+        if (!findings.leg) return { found: false, notes: findings.notes };
+        // Local times with the zone: raw UTC timestamps led the orchestrator to quote UTC as local time.
+        const { leg } = findings;
+        const at = (iso: string | undefined, timeZone: string) => (iso ? localDateTime(iso, timeZone) : null);
+        return {
+            found: true,
+            status: leg.status,
+            route: `${leg.origin.iata} → ${leg.destination.iata}`,
+            scheduledDeparture: at(leg.scheduledDeparture, leg.origin.timeZone),
+            actualDeparture: at(leg.actualDeparture, leg.origin.timeZone),
+            scheduledArrival: at(leg.scheduledArrival, leg.destination.timeZone),
+            actualArrival: at(leg.actualArrival, leg.destination.timeZone),
+        };
+    }
+
+    /**
+     * Runs a sub-agent at most once per claim, tracing start, end or failure. Repeat delegations reuse
+     * the result; after a failure, later calls get undefined without retrying.
+     * @param agent Sub-agent name.
+     * @param delegation Its slot in the run context (mutated).
+     * @param run Current run.
+     * @param focus What the orchestrator asked for.
+     * @param work Runs the sub-agent.
+     */
+    private async runOnce<T>(
+        agent: Extract<TraceActor, 'policy' | 'flight'>,
+        delegation: Delegation<T>,
+        run: RunContext,
+        focus: string,
+        work: () => Promise<T>,
+    ): Promise<T | undefined> {
+        if (delegation.result || delegation.failed) return delegation.result;
+
+        await run.recorder.record(agent, 'agent.started', `${agent} agent started`, { data: { focus } });
+        const startedAt = Date.now();
+        try {
+            delegation.result = await work();
+            await run.recorder.record(agent, 'agent.completed', `${agent} agent finished`, {
+                data: { findings: delegation.result },
+                durationMs: Date.now() - startedAt,
+            });
+        } catch (error) {
+            this.logError(agent, run.claim, error);
+            delegation.failed = true;
+            await run.recorder.record(agent, 'agent.failed', `${agent} agent failed`);
+        }
+        return delegation.result;
     }
 
     /**

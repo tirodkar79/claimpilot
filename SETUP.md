@@ -10,7 +10,7 @@ Everything needed to run ClaimPilot locally, from a clean machine. Takes about 1
 | One language model (Gemini, Groq or Ollama) | Yes | Gemini or Groq key; Ollama needs none |
 | Weather: Open-Meteo MCP server | Yes, from the weather phase | No key |
 | Airport weather reports (METAR) | No, recorded data is committed | No account |
-| Live flight data (AeroDataBox) | No, recorded data is the default | Free RapidAPI key, only for live mode |
+| Live flight data (AeroDataBox) | No, recorded flights are the default | Free RapidAPI key, only for live mode |
 
 - [1. Tools](#1-tools)
 - [2. MongoDB](#2-mongodb)
@@ -185,20 +185,25 @@ Airport observations (METAR: visibility, fog codes) fill that gap.
 
 ### Flight data: AeroDataBox (optional, live mode only)
 
-Flight status (scheduled vs actual times) comes from **recorded responses** by default, covering every eval
-scenario. Live lookups are only for trying real flights.
+Flight status (scheduled vs actual times) comes from **recorded flights** by default, covering every eval
+scenario and working for any date (see the table in the README). Live lookups are only for trying real flights.
 
 1. Create a free RapidAPI account and open AeroDataBox:
    <https://rapidapi.com/aedbx-aedbx/api/aerodatabox>.
 2. Subscribe to the free **Basic** plan (a few hundred API units a month at the time of writing; check the
    pricing tab, as quota and history depth change).
 3. Copy your key from the endpoint page (`X-RapidAPI-Key` header).
-4. *Planned* variables:
+4. Set in `claimpilot-api/.env`:
 
    ```env
    FLIGHT_DATA_MODE=live              # default: fixtures
-   AERODATABOX_API_KEY=...            # RapidAPI key
+   AERODATABOX_API_KEY=...            # RapidAPI key; required in live mode
+   # AERODATABOX_HOST=aerodatabox.p.rapidapi.com   (default)
    ```
+
+> The AeroDataBox response mapping (`src/flights/aerodatabox.mapper.ts`) is built from AeroDataBox's documented
+> fields and tested against a hand-written sample, not yet against a real response. Try one known flight
+> after adding a key and compare the times with the airline's site before relying on live mode.
 
 Keep live mode off for evals: a few hundred units a month runs out quickly, and live data makes results
 change from run to run.
@@ -228,7 +233,9 @@ Edit `.env`:
 | `GOOGLE_GENERATIVE_AI_API_KEY` | empty | Required when `MODEL` starts with `google:` |
 | `GROQ_API_KEY` | not set | Required when `MODEL` starts with `groq:` |
 | `OLLAMA_BASE_URL` | `http://localhost:11434/api` | Only for Ollama on another host |
-| `HTTP_TIMEOUT_MS` / `HTTP_MAX_RETRIES` | `8000` / `2` | Outbound calls to flight/weather APIs (later phases) |
+| `HTTP_TIMEOUT_MS` / `HTTP_MAX_RETRIES` | `8000` / `2` | Outbound calls (AeroDataBox; weather later) |
+| `CLAIMANT_TIMEZONE` | `Asia/Kolkata` | Zone for "today" and claim dates (01:30 IST on 2 Oct is still 1 Oct in UTC) |
+| `FLIGHT_DATA_MODE` | `fixtures` | `live` for AeroDataBox (needs `AERODATABOX_API_KEY`) |
 | `CORS_ORIGINS` | `http://localhost:5173` | Where the web app runs |
 
 The API checks all of this at startup and lists every problem at once, for example:
@@ -272,9 +279,10 @@ Check, in order:
 1. `curl http://localhost:3000/health` → `{"status":"ok","mongo":"up",...}`
 2. <http://localhost:3000/docs> shows Swagger.
 3. <http://localhost:5173> shows the app, with **API · online** at the bottom of the sidebar.
-4. Click **Complete claim**, then **Run triage**. Within a few seconds the trace shows Intake finishing and
-   the outcome is **Pending evidence**.
-5. Try **Missing details**: the outcome is **Need info** with questions for the claimant.
+4. Click **Delay payout**, then **Run triage**. Within ~10 seconds the trace shows the orchestrator delegating
+   to the Policy and Flight agents and the outcome is **Approved, INR 2,000** (3h50m recorded vs 4h claimed).
+5. Try the other examples: **Fog** → Referred (§7.3), **Short delay** → Rejected, **Arrival-measured** →
+   Approved INR 6,000, **Unknown flight** → Need info, **Missing details** → Need info.
 
 If step 4 ends in **Referred**, the model call failed; the API terminal shows why (usually a bad key or a rate
 limit, see below).
@@ -296,6 +304,7 @@ npm run lint                      # in either app
 | `Invalid environment configuration: ...` at startup | Missing or malformed `.env` value | Fix the listed variables |
 | `/health` returns 503 `MongoDB not connected` | Mongo not running or wrong URI | `docker compose up -d mongo`; check `MONGO_URI` |
 | Claims always end in **Referred** | Model call failing | Check the API log: `401/403` = bad key, `429` = rate limit, `404` = wrong model id |
+| Claims after a few runs end in **Referred** | Free per-minute quota used up (~8 model calls per claim) | Wait a minute between claims, or switch model |
 | `429` / "quota exceeded" | Free-tier limit hit | Wait a minute (per-minute limit) or until reset (daily limit); switch `MODEL` to another provider or to Ollama |
 | Web shows **API · offline** | API not running, wrong `VITE_API_URL`, or CORS | Start the API; check `VITE_API_URL` and `CORS_ORIGINS` |
 | Submitting returns `Requires role: claimant` | Role switch is on Reviewer | Switch to **Claimant** in the top bar |

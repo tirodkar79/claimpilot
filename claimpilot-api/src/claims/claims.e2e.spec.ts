@@ -15,28 +15,46 @@ let intakeReply: Record<string, unknown> = {};
 /** A flight date inside P-77's cover and claim deadline, whenever the test runs. */
 const recentFlightDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
 
-const policyReading = {
+const noExclusions = {
     delayMeasure: 'departure',
+    relevantExclusions: [],
+    summary: 'Delay is measured from departure. No exclusion fits a technical fault.',
+    citedClauseIds: ['4.1'],
+};
+const fogExclusion = {
+    ...noExclusions,
     relevantExclusions: [{ type: 'severe_weather', clauseId: '7.3', summary: 'Fog delays are excluded.' }],
-    summary: 'Delay is measured from departure. Fog could trigger the weather exclusion.',
     citedClauseIds: ['4.1', '7.3'],
 };
+let policyReply: Record<string, unknown> = noExclusions;
 
 /**
- * Plays every agent with one shared mock model, told apart by their instructions: tool-using agents
- * call one tool, then answer.
+ * Plays every agent with one shared mock model, told apart by their instructions. The orchestrator delegates
+ * to the Policy agent, then the Flight agent, then answers; sub-agents call one tool, then answer.
  * @param call What the model was asked.
  */
 function respond(call: MockCall): MockStep {
     if (call.system.includes('You extract facts')) return { text: JSON.stringify(intakeReply) };
     if (call.system.includes('You coordinate')) {
+        if (call.toolResultCount === 0) return { toolCall: { name: 'consultPolicyAgent', input: { focus: 'cover' } } };
+        if (call.toolResultCount === 1) return { toolCall: { name: 'consultFlightAgent', input: { focus: 'times' } } };
+        return { text: 'Checked the policy and the flight record.' };
+    }
+    if (call.system.includes('You find what actually happened')) {
         return call.hasToolResult
-            ? { text: 'Policy P-77 covers the flight; fog may be excluded under 7.3.' }
-            : { toolCall: { name: 'consultPolicyAgent', input: { focus: 'cover and exclusions' } } };
+            ? {
+                  text: JSON.stringify({
+                      date: intakeReply.flightDate,
+                      origin: intakeReply.origin,
+                      destination: intakeReply.destination,
+                      notes: 'Found the flight record.',
+                  }),
+              }
+            : { toolCall: { name: 'getFlightStatus', input: { date: intakeReply.flightDate } } };
     }
     return call.hasToolResult
-        ? { text: JSON.stringify(policyReading) }
-        : { toolCall: { name: 'searchPolicyClauses', input: { query: 'weather exclusion' } } };
+        ? { text: JSON.stringify(policyReply) }
+        : { toolCall: { name: 'searchPolicyClauses', input: { query: 'delay measured weather exclusion' } } };
 }
 
 // Boots the real app (guards, filter, Mongo, SSE) with only the language model mocked.
@@ -92,15 +110,16 @@ describe('Claims API', () => {
         );
     });
 
-    it('delegates to the Policy agent and streams every step', async () => {
+    it('approves the tier the flight record reaches and streams every step', async () => {
         intakeReply = {
             flightNumber: '6E-2134',
             flightDate: recentFlightDate,
             origin: 'BOM',
             destination: 'DEL',
             claimedDelayMinutes: 240,
-            claimedCause: 'fog',
+            claimedCause: 'technical fault',
         };
+        policyReply = noExclusions;
 
         const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
         expect(created.body).toMatchObject({ status: 'triaging', customerId: 'C-1042' });
@@ -114,6 +133,10 @@ describe('Claims API', () => {
             'policy:agent.started',
             'policy:tool.called',
             'policy:agent.completed',
+            'orchestrator:agent.delegated',
+            'flight:agent.started',
+            'flight:tool.called',
+            'flight:agent.completed',
             'orchestrator:agent.completed',
             'orchestrator:decision',
             'orchestrator:triage.completed',
@@ -122,22 +145,55 @@ describe('Claims API', () => {
         const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(REVIEWER).expect(200);
         expect(claim.body).toMatchObject({
             status: 'completed',
-            facts: { flightNumber: '6E2134', claimedDelayMinutes: 240 },
-            outcome: { decision: 'PENDING', citations: [{ clauseId: '2.1' }, { clauseId: '9.2' }] },
-            evidence: {
-                policy: {
-                    policyId: 'P-77',
-                    relevantExclusions: [{ clauseId: '7.3' }],
-                    citedClauses: [{ id: '4.1' }, { id: '7.3' }],
-                    droppedCitations: [],
-                },
+            outcome: {
+                decision: 'APPROVE',
+                payout: { amount: 2000, currency: 'INR' },
+                evidencedDelayMinutes: 230,
+                citations: [{ clauseId: '4.1' }, { clauseId: '4.2' }],
             },
-            summary: 'Policy P-77 covers the flight; fog may be excluded under 7.3.',
+            evidence: {
+                policy: { policyId: 'P-77', droppedCitations: [] },
+                flight: { selectedBy: 'agent', source: 'recorded', leg: { origin: { iata: 'BOM' } } },
+            },
+            summary: 'Checked the policy and the flight record.',
         });
     });
 
+    it('holds the payout for a person when a weather exclusion could apply', async () => {
+        intakeReply = { ...intakeReply, claimedCause: 'fog' };
+        policyReply = fogExclusion;
+
+        const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
+        await streamedEvents(created.body.id);
+
+        const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
+        expect(claim.body.outcome).toMatchObject({ decision: 'REFER', citations: [{ clauseId: '7.3' }] });
+    });
+
+    it('rejects a delay below every tier', async () => {
+        intakeReply = { ...intakeReply, flightNumber: 'AI 865', claimedCause: 'technical fault' };
+        policyReply = noExclusions;
+
+        const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
+        await streamedEvents(created.body.id);
+
+        const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
+        expect(claim.body.outcome).toMatchObject({ decision: 'REJECT', evidencedDelayMinutes: 80 });
+    });
+
+    it('asks the claimant to confirm a flight that has no record', async () => {
+        intakeReply = { ...intakeReply, flightNumber: '6E-2314' };
+
+        const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
+        await streamedEvents(created.body.id);
+
+        const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
+        expect(claim.body.outcome.decision).toBe('NEED_INFO');
+        expect(claim.body.outcome.reasons[0]).toContain("couldn't find flight 6E2314");
+    });
+
     it('rejects a flight outside the cover period, citing the clause', async () => {
-        intakeReply = { ...intakeReply, flightDate: recentFlightDate };
+        intakeReply = { ...intakeReply, flightNumber: '6E-2134' };
         const expired = { ...body, policyId: 'P-12' };
 
         const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(expired).expect(202);
@@ -162,7 +218,9 @@ describe('Claims API', () => {
 
         const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
         const events = await streamedEvents(created.body.id);
-        expect(events.filter((event) => event.startsWith('policy:'))).toEqual([]);
+        expect(events.filter((event) => !event.startsWith('orchestrator:') && !event.startsWith('intake:'))).toEqual(
+            [],
+        );
 
         const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
         expect(claim.body.outcome).toEqual({

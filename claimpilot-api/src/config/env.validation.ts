@@ -38,6 +38,19 @@ const model = z
         return { provider: raw.slice(0, separator) as ModelProvider, modelId: raw.slice(separator + 1) };
     });
 
+/**
+ * True for a time zone the runtime knows, e.g. "Asia/Kolkata".
+ * @param timeZone Candidate IANA time zone.
+ */
+function isValidTimeZone(timeZone: string): boolean {
+    try {
+        new Intl.DateTimeFormat('en-US', { timeZone });
+        return true;
+    } catch {
+        return false;
+    }
+}
+
 /** Comma-separated string → trimmed, non-empty values. */
 const csv = z.string().transform((raw) =>
     raw
@@ -59,8 +72,24 @@ const envSchema = z
         GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
         GROQ_API_KEY: z.string().optional(),
         OLLAMA_BASE_URL: z.url().default('http://localhost:11434/api'),
+        /** Time zone used for "today" and claim submission dates (claimants are in India). */
+        CLAIMANT_TIMEZONE: z
+            .string()
+            .refine(isValidTimeZone, 'must be an IANA time zone, e.g. Asia/Kolkata')
+            .default('Asia/Kolkata'),
+        /** `fixtures`: recorded flights (default, deterministic). `live`: AeroDataBox via RapidAPI. */
+        FLIGHT_DATA_MODE: z.enum(['fixtures', 'live']).default('fixtures'),
+        AERODATABOX_API_KEY: z.string().optional(),
+        AERODATABOX_HOST: z.string().default('aerodatabox.p.rapidapi.com'),
     })
     .superRefine((env, ctx) => {
+        if (env.FLIGHT_DATA_MODE === 'live' && !env.AERODATABOX_API_KEY) {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['AERODATABOX_API_KEY'],
+                message: 'required when FLIGHT_DATA_MODE=live',
+            });
+        }
         const keyVariable = PROVIDER_API_KEY_VARIABLE[env.MODEL.provider];
         if (keyVariable && !env[keyVariable]) {
             ctx.addIssue({

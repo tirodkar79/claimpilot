@@ -1,5 +1,6 @@
 import { useParams } from 'react-router';
 import { FactsCard } from './triage/FactsCard';
+import { FlightCard } from './triage/FlightCard';
 import { OutcomeCard } from './triage/OutcomeCard';
 import { PolicyCard } from './triage/PolicyCard';
 import { TraceLog } from './triage/TraceLog';
@@ -35,6 +36,12 @@ export function ClaimTriagePage() {
                 </section>
                 <FactsCard facts={claim.data?.facts} />
                 <PolicyCard findings={claim.data?.evidence?.policy} policyId={claim.data?.policyId ?? ''} />
+                <FlightCard
+                    findings={claim.data?.evidence?.flight}
+                    measure={claim.data?.evidence?.policy?.delayMeasure}
+                    claimedMinutes={claim.data?.facts?.claimedDelayMinutes}
+                    outcome={claim.data?.outcome}
+                />
                 <OutcomeCard outcome={claim.data?.outcome} summary={claim.data?.summary} />
             </div>
             <TraceLog events={stream.events} status={stream.status} error={stream.error} />

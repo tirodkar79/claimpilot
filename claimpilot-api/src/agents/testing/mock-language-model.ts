@@ -16,6 +16,8 @@ export interface MockCall {
     toolNames: string[];
     /** True once a tool result is in the conversation. */
     hasToolResult: boolean;
+    /** Number of tool results in the conversation so far. */
+    toolResultCount: number;
 }
 
 type CallOptions = Parameters<MockLanguageModelV4['doGenerate']>[0];
@@ -100,5 +102,6 @@ function describeCall(options: CallOptions): MockCall {
             .join('\n'),
         toolNames: (options.tools ?? []).map((tool) => tool.name),
         hasToolResult: messages.some((message) => message.role === 'tool'),
+        toolResultCount: messages.filter((message) => message.role === 'tool').length,
     };
 }

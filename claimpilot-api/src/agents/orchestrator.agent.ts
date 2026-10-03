@@ -4,6 +4,7 @@ import { createTool } from '@mastra/core/tools';
 import { Inject, Injectable } from '@nestjs/common';
 import { z } from 'zod';
 import type { ClaimFacts } from '../claims/claim-facts';
+import type { TraceActor } from '../trace/trace.constants';
 import type { TraceRecorder } from '../trace/trace.service';
 import { LANGUAGE_MODEL } from './language-model.provider';
 
@@ -14,18 +15,25 @@ export interface OrchestratorDelegates {
      * @param focus What the orchestrator wants to know.
      */
     consultPolicy(focus: string): Promise<Record<string, unknown>>;
+
+    /**
+     * Runs the Flight evidence agent and returns a short briefing for the orchestrator.
+     * @param focus What the orchestrator wants to know.
+     */
+    consultFlight(focus: string): Promise<Record<string, unknown>>;
 }
 
 const INSTRUCTIONS = `You coordinate the triage of a flight-delay insurance claim.
 
 You receive the claim facts, never the claimant's raw message. Delegate to specialist agents through tools:
 - consultPolicyAgent: reads the policy wording (cover, how delay is measured, exclusions).
+- consultFlightAgent: finds what actually happened to the flight (scheduled and actual times).
 
 Rules:
-- Consult the Policy agent once for every claim before answering.
+- Consult both agents once for every claim before answering; you can call them in the same step.
 - You do not approve, reject or calculate payouts; a rules engine does that from the evidence.
 - Finish with two or three plain sentences for a claims reviewer: what was checked and what was found,
-  including any exclusions the Policy agent flagged.`;
+  including any exclusions the Policy agent flagged and whether the flight record was found.`;
 
 /**
  * LLM orchestrator: decides which sub-agents to call and summarises what they found. It has no data
@@ -44,24 +52,27 @@ export class OrchestratorAgent {
      * @throws When the model fails or returns no summary.
      */
     async run(facts: ClaimFacts, delegates: OrchestratorDelegates, recorder: TraceRecorder): Promise<string> {
-        const consultPolicyAgent = createTool({
-            id: 'consultPolicyAgent',
-            description: 'Ask the Policy agent about this claim’s policy: cover, delay measure and exclusions.',
-            inputSchema: z.object({ focus: z.string().describe('What you want the Policy agent to check') }),
-            execute: async ({ focus }) => {
-                await recorder.record('orchestrator', 'agent.delegated', `Delegated to policy: ${focus}`, {
-                    data: { to: 'policy', focus },
-                });
-                return delegates.consultPolicy(focus);
-            },
-        });
-
         const agent = new Agent({
             id: 'orchestrator',
             name: 'Orchestrator',
             instructions: INSTRUCTIONS,
             model: this.model,
-            tools: { consultPolicyAgent },
+            tools: {
+                consultPolicyAgent: delegationTool(
+                    'consultPolicyAgent',
+                    'policy',
+                    'Ask the Policy agent about cover, delay measure and exclusions.',
+                    (focus) => delegates.consultPolicy(focus),
+                    recorder,
+                ),
+                consultFlightAgent: delegationTool(
+                    'consultFlightAgent',
+                    'flight',
+                    'Ask the Flight evidence agent what happened to the flight.',
+                    (focus) => delegates.consultFlight(focus),
+                    recorder,
+                ),
+            },
         });
         // Plain text is enough for a summary, so no structured-output call is spent here.
         const result = await agent.generate(`Claim facts: ${JSON.stringify(facts)}`, { maxSteps: 3 });
@@ -69,4 +80,32 @@ export class OrchestratorAgent {
         if (!summary) throw new Error('Orchestrator returned an empty summary');
         return summary;
     }
+}
+
+/**
+ * A tool that hands work to one sub-agent and traces the hand-off.
+ * @param id Tool name shown to the model.
+ * @param to Sub-agent the tool delegates to.
+ * @param description What the tool is for, as shown to the model.
+ * @param delegate Runs the sub-agent.
+ * @param recorder Trace recorder of the current run.
+ */
+function delegationTool(
+    id: string,
+    to: TraceActor,
+    description: string,
+    delegate: (focus: string) => Promise<Record<string, unknown>>,
+    recorder: TraceRecorder,
+) {
+    return createTool({
+        id,
+        description,
+        inputSchema: z.object({ focus: z.string().describe(`What you want the ${to} agent to check`) }),
+        execute: async ({ focus }) => {
+            await recorder.record('orchestrator', 'agent.delegated', `Delegated to ${to}: ${focus}`, {
+                data: { to, focus },
+            });
+            return delegate(focus);
+        },
+    });
 }
