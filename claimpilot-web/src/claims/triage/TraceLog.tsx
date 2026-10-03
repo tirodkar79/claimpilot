@@ -25,6 +25,17 @@ function offset(event: TraceEvent, start: number): string {
     return ((Date.parse(event.at) - start) / 1000).toFixed(2).padStart(5, '0');
 }
 
+/**
+ * Extra style for an event: tool calls are indented under their agent, guard steps and failures stand out.
+ * @param event Trace event.
+ */
+function lineClass(event: TraceEvent): string | undefined {
+    if (event.type === 'agent.failed') return styles.logFailed;
+    if (event.type === 'guard.enforced') return styles.logGuard;
+    if (event.type === 'tool.called') return styles.logTool;
+    return undefined;
+}
+
 /** Live list of every orchestrator and agent step, in order. */
 export function TraceLog({ events, status, error }: TraceLogProps) {
     const start = events[0] ? Date.parse(events[0].at) : 0;
@@ -38,7 +49,7 @@ export function TraceLog({ events, status, error }: TraceLogProps) {
             </h3>
             <ol className={styles.log} aria-live="polite">
                 {events.map((event) => (
-                    <li key={event.seq} className={event.type === 'agent.failed' ? styles.logFailed : undefined}>
+                    <li key={event.seq} className={lineClass(event)}>
                         <span className={styles.logTime}>{offset(event, start)}</span>
                         <span className={styles.logActor}>{event.actor}</span>
                         <span>{event.message}</span>

@@ -1,12 +1,13 @@
 import { useParams } from 'react-router';
 import { FactsCard } from './triage/FactsCard';
 import { OutcomeCard } from './triage/OutcomeCard';
+import { PolicyCard } from './triage/PolicyCard';
 import { TraceLog } from './triage/TraceLog';
 import { useClaim } from './use-claim';
 import { useClaimEvents } from './use-claim-events';
 import styles from './ClaimTriagePage.module.css';
 
-/** Live view of one claim: what was submitted, what Intake extracted, the outcome and the trace. */
+/** Live view of one claim: what was submitted, what each agent found, the outcome and the trace. */
 export function ClaimTriagePage() {
     const { claimId = '' } = useParams();
     const claim = useClaim(claimId);
@@ -33,7 +34,8 @@ export function ClaimTriagePage() {
                     <blockquote className={styles.message}>{claim.data?.message ?? '…'}</blockquote>
                 </section>
                 <FactsCard facts={claim.data?.facts} />
-                <OutcomeCard outcome={claim.data?.outcome} />
+                <PolicyCard findings={claim.data?.evidence?.policy} policyId={claim.data?.policyId ?? ''} />
+                <OutcomeCard outcome={claim.data?.outcome} summary={claim.data?.summary} />
             </div>
             <TraceLog events={stream.events} status={stream.status} error={stream.error} />
         </div>

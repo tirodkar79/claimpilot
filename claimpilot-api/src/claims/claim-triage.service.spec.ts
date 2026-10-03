@@ -1,6 +1,10 @@
 import { Logger } from '@nestjs/common';
 import { Types } from 'mongoose';
 import type { IntakeAgent, IntakeExtraction } from '../agents/intake.agent';
+import type { OrchestratorAgent, OrchestratorDelegates } from '../agents/orchestrator.agent';
+import type { PolicyAgent, PolicyFindings } from '../agents/policy.agent';
+import type { PoliciesRepository } from '../policies/policies.repository';
+import { POLICY_SEEDS } from '../policies/policies.seed';
 import type { TraceRecorder, TraceService } from '../trace/trace.service';
 import type { Claim } from './claim.schema';
 import { ClaimTriageService } from './claim-triage.service';
@@ -15,80 +19,172 @@ const complete: IntakeExtraction = {
     claimedCause: 'fog',
 };
 
-const claim = { _id: new Types.ObjectId(), message: 'My flight 6E-2134 was delayed 4 hours' } as Claim;
+const findings: PolicyFindings = {
+    policyId: 'P-77',
+    delayMeasure: 'departure',
+    delayMeasureMismatch: false,
+    relevantExclusions: [{ type: 'severe_weather', clauseId: '7.3', summary: 'Fog is excluded.' }],
+    summary: 'Fog may be excluded.',
+    citedClauses: [],
+    droppedCitations: [],
+};
+
+const claim = {
+    _id: new Types.ObjectId(),
+    customerId: 'C-1042',
+    policyId: 'P-77',
+    message: 'My flight 6E-2134 was delayed 4 hours',
+    createdAt: new Date('2026-09-20T10:00:00Z'),
+} as Claim;
+
+type Orchestrate = (delegates: OrchestratorDelegates) => Promise<string>;
 
 /**
- * Builds the service with an Intake stub and records what it traced and stored.
- * @param extract Intake agent behaviour.
+ * Builds the service with stubbed agents and an in-memory trace.
+ * @param overrides Agent behaviour for the test.
  */
-function setup(extract: () => Promise<IntakeExtraction>) {
-    const traced: { actor: string; type: string; message: string }[] = [];
+function setup(
+    overrides: {
+        extract?: () => Promise<IntakeExtraction>;
+        orchestrate?: Orchestrate;
+        assess?: () => Promise<PolicyFindings>;
+        policyId?: string;
+    } = {},
+) {
+    const traced: string[] = [];
     const recorder: TraceRecorder = {
-        record: jest.fn(async (actor, type, message) => {
-            traced.push({ actor, type, message });
+        record: async (actor, type) => {
+            traced.push(`${actor}:${type}`);
             return {} as never;
-        }),
+        },
     };
     const claims = { updateById: jest.fn().mockResolvedValue(null) };
+    const assess = jest.fn(overrides.assess ?? (async () => findings));
+    const orchestrate: Orchestrate =
+        overrides.orchestrate ??
+        (async (delegates) => {
+            await delegates.consultPolicy('cover and exclusions');
+            return 'Policy checked.';
+        });
+
     const service = new ClaimTriageService(
         claims as unknown as ClaimsRepository,
-        { extract: jest.fn(extract) } as unknown as IntakeAgent,
+        {
+            findByPolicyId: async (id: string) => POLICY_SEEDS.find((p) => p.policyId === id) ?? null,
+        } as unknown as PoliciesRepository,
+        { extract: jest.fn(overrides.extract ?? (async () => complete)) } as unknown as IntakeAgent,
+        {
+            run: (_facts: unknown, delegates: OrchestratorDelegates) => orchestrate(delegates),
+        } as unknown as OrchestratorAgent,
+        { assess } as unknown as PolicyAgent,
         { forClaim: () => recorder } as unknown as TraceService,
     );
-    return { service, traced, claims };
+    const target = { ...claim, policyId: overrides.policyId ?? claim.policyId } as Claim;
+    return { service, traced, claims, assess, run: () => service.run(target, '2026-10-01') };
 }
 
 beforeAll(() => jest.spyOn(Logger.prototype, 'error').mockImplementation());
 
 describe('ClaimTriageService', () => {
-    it('marks a complete claim PENDING and traces each step in order', async () => {
-        const { service, traced, claims } = setup(async () => complete);
+    it('delegates to the Policy agent via the orchestrator and lets the rules engine decide', async () => {
+        const { run, traced, claims, assess } = setup();
 
-        await expect(service.run(claim, '2026-10-01')).resolves.toMatchObject({ decision: 'PENDING' });
+        await expect(run()).resolves.toMatchObject({ decision: 'PENDING' });
 
-        expect(traced.map((e) => `${e.actor}:${e.type}`)).toEqual([
+        expect(assess).toHaveBeenCalledTimes(1);
+        expect(traced).toEqual([
             'orchestrator:triage.started',
             'intake:agent.started',
             'intake:agent.completed',
+            'orchestrator:agent.started',
+            'policy:agent.started',
+            'policy:agent.completed',
+            'orchestrator:agent.completed',
             'orchestrator:decision',
             'orchestrator:triage.completed',
         ]);
         expect(claims.updateById).toHaveBeenCalledWith(String(claim._id), {
-            facts: expect.objectContaining({ flightNumber: '6E2134' }),
-        });
-        expect(claims.updateById).toHaveBeenLastCalledWith(String(claim._id), {
-            outcome: expect.objectContaining({ decision: 'PENDING' }),
-            status: 'completed',
+            evidence: { policy: findings },
+            summary: 'Policy checked.',
         });
     });
 
-    it('asks for missing facts with NEED_INFO', async () => {
-        const { service } = setup(async () => ({ ...complete, flightDate: null, claimedDelayMinutes: null }));
-
-        const outcome = await service.run(claim, '2026-10-01');
-
-        expect(outcome.decision).toBe('NEED_INFO');
-        expect(outcome.reasons).toEqual(['On what date was your flight?', 'Roughly how long was your flight delayed?']);
+    it('runs the Policy agent only once even if the orchestrator asks twice', async () => {
+        const { run, assess } = setup({
+            orchestrate: async (delegates) => {
+                await delegates.consultPolicy('cover');
+                await delegates.consultPolicy('exclusions');
+                return 'Checked twice.';
+            },
+        });
+        await run();
+        expect(assess).toHaveBeenCalledTimes(1);
     });
 
-    it('refers the claim to a human when Intake fails, and still completes the trace', async () => {
-        const { service, traced, claims } = setup(async () => {
-            throw new Error('model unavailable');
+    it('enforces the policy check when the orchestrator skips it', async () => {
+        const { run, traced, assess } = setup({ orchestrate: async () => 'Skipped delegation.' });
+
+        await expect(run()).resolves.toMatchObject({ decision: 'PENDING' });
+
+        expect(assess).toHaveBeenCalledTimes(1);
+        expect(traced).toContain('orchestrator:guard.enforced');
+    });
+
+    it('still decides when the orchestrator fails, because the guard runs the required check', async () => {
+        const { run, traced } = setup({
+            orchestrate: async () => {
+                throw new Error('model overloaded');
+            },
         });
 
-        await expect(service.run(claim, '2026-10-01')).resolves.toMatchObject({ decision: 'REFER' });
+        await expect(run()).resolves.toMatchObject({ decision: 'PENDING' });
+        expect(traced).toEqual(expect.arrayContaining(['orchestrator:agent.failed', 'orchestrator:guard.enforced']));
+    });
 
-        expect(traced.map((e) => e.type)).toEqual([
-            'triage.started',
-            'agent.started',
-            'agent.failed',
-            'decision',
-            'triage.completed',
+    it('refers the claim when the Policy agent fails', async () => {
+        const { run, traced } = setup({
+            assess: async () => {
+                throw new Error('model overloaded');
+            },
+        });
+
+        await expect(run()).resolves.toMatchObject({ decision: 'REFER' });
+        expect(traced).toContain('policy:agent.failed');
+        expect(traced).not.toContain('orchestrator:guard.enforced');
+    });
+
+    it('asks for the policy number without running the Policy agent when the policy does not exist', async () => {
+        const { run, assess } = setup({ policyId: 'P-404' });
+
+        await expect(run()).resolves.toMatchObject({ decision: 'NEED_INFO' });
+        expect(assess).not.toHaveBeenCalled();
+    });
+
+    it('asks for missing facts without starting the orchestrator', async () => {
+        const { run, traced } = setup({ extract: async () => ({ ...complete, flightDate: null }) });
+
+        await expect(run()).resolves.toMatchObject({
+            decision: 'NEED_INFO',
+            reasons: ['On what date was your flight?'],
+        });
+        expect(traced.some((event) => event.startsWith('policy:'))).toBe(false);
+        expect(traced).not.toContain('orchestrator:agent.started');
+    });
+
+    it('refers the claim when Intake fails, and still completes the trace', async () => {
+        const { run, traced } = setup({
+            extract: async () => {
+                throw new Error('model unavailable');
+            },
+        });
+
+        await expect(run()).resolves.toMatchObject({ decision: 'REFER' });
+        expect(traced).toEqual([
+            'orchestrator:triage.started',
+            'intake:agent.started',
+            'intake:agent.failed',
+            'orchestrator:decision',
+            'orchestrator:triage.completed',
         ]);
-        expect(claims.updateById).toHaveBeenCalledTimes(1);
-        expect(claims.updateById).toHaveBeenCalledWith(String(claim._id), {
-            outcome: expect.objectContaining({ decision: 'REFER' }),
-            status: 'completed',
-        });
     });
 });

@@ -1,7 +1,12 @@
 import { Prop, Schema, SchemaFactory } from '@nestjs/mongoose';
 import { Types } from 'mongoose';
+import type { PolicyFindings } from '../agents/policy.agent';
 import type { ClaimFacts } from './claim-facts';
 import { CLAIM_STATUSES, type ClaimOutcome, type ClaimStatus } from './claims.constants';
+
+export interface ClaimEvidence {
+    policy?: PolicyFindings;
+}
 
 @Schema({ collection: 'claims', timestamps: true, versionKey: false })
 export class Claim {
@@ -28,6 +33,14 @@ export class Claim {
 
     @Prop({ type: Object })
     outcome?: ClaimOutcome;
+
+    /** What each sub-agent found, after code validation. */
+    @Prop({ type: Object })
+    evidence?: ClaimEvidence;
+
+    /** Orchestrator's summary for the reviewer. Informational only; never used to decide. */
+    @Prop()
+    summary?: string;
 
     createdAt: Date;
     updatedAt: Date;

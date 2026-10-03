@@ -62,13 +62,32 @@ See **[SETUP.md](SETUP.md)** for getting API keys, free-tier limits and which pr
 
 ## How a claim flows (so far)
 
+```
+POST /claims ─► Intake agent ─► completeness check ─► Orchestrator agent ─► Policy agent ─► guard ─► rules engine
+                (raw text, no    (missing → NEED_INFO,  (LLM; delegates via  (clause search,  (runs required   (decides; cites
+                 tools)           no other agent runs)   tools, no data)      ≤3 searches)     checks it skipped) clauses)
+```
+
 1. `POST /claims` (claimant role) stores the claim and returns `202` straight away.
 2. The **Intake agent** turns the free-text message into typed facts. It is the only agent that sees the raw
    text and it has no tools, so instructions hidden in a claim can't trigger anything.
-3. The orchestrator checks the facts: missing flight number, date or delay → **NEED_INFO** with questions;
-   complete → **PENDING** until the evidence agents land; any agent failure → **REFER** to a human.
-4. Every step is stored as a trace event. `GET /claims/:id/events` streams them (server-sent events) and the
-   web app shows them live. `GET /claims/:id` returns the facts and outcome.
+3. Missing flight number, date or delay → **NEED_INFO** with questions, without calling any other agent.
+4. The **Orchestrator agent** (LLM) decides whom to consult. Its only tools are delegations to sub-agents, so
+   everything it knows comes through them, and every delegation is traced.
+5. The **Policy agent** reads the policy wording through a clause-search tool bound to that one policy (at most
+   3 searches, enforced in code). It reports how delay is measured and which exclusions the claimed cause
+   might trigger. Code then drops any clause it cites that doesn't exist and keeps the schedule's values for
+   anything numeric.
+6. A **guard** runs the Policy agent itself if the orchestrator skipped it or failed, so a model mistake can't
+   skip a required check. Evals will count how often the guard had to step in.
+7. The **rules engine** (`adjudicate`, plain code) decides from evidence: unknown policy → NEED_INFO, policy
+   held by someone else → REFER, flight outside cover or claim past the deadline → REJECT with the clause,
+   otherwise PENDING until flight evidence lands. A failed agent → REFER to a human.
+8. Every step is a trace event. `GET /claims/:id/events` streams them (server-sent events); `GET /claims/:id`
+   returns facts, policy findings, the outcome with cited clauses, and the orchestrator's summary.
+
+Demo policies (fictional, seeded on startup): **P-77** SkyGuard Standard (C-1042, excludes severe weather),
+**P-91** SkyGuard Plus (C-2077, covers weather, measures arrival delay), **P-12** expired 2025 policy (C-1042).
 
 ## Tests, lint and formatting
 

@@ -132,6 +132,17 @@
 .log li {
     display: flex;
     gap: 10px;
+    min-width: 0;
+}
+
+.log li > span {
+    flex: none;
+}
+
+.log li > span:nth-child(3) {
+    flex: 1;
+    min-width: 0;
+    overflow-wrap: anywhere;
 }
 
 .logTime {
@@ -151,4 +162,103 @@
 .logError {
     color: var(--bad);
     font-size: 12px;
+}
+
+.bad {
+    color: var(--bad);
+}
+
+.eyebrow {
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+}
+
+.chip {
+    padding: 2px 7px;
+    border: 1px solid var(--accent-line);
+    border-radius: 6px;
+    background: var(--accent-soft);
+    color: var(--accent);
+    font-family: var(--font-mono);
+    font-size: 11px;
+    font-weight: 500;
+    white-space: nowrap;
+}
+
+/* Policy */
+.exclusions {
+    display: grid;
+    gap: 8px;
+}
+
+.exclusion {
+    display: grid;
+    grid-template-columns: auto auto 1fr;
+    align-items: baseline;
+    gap: 8px;
+    font-size: 12.5px;
+}
+
+.grounding {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 10px;
+    border-radius: 8px;
+    background: var(--warn-bg);
+    color: var(--warn);
+    font-size: 12px;
+}
+
+.clauses {
+    display: grid;
+    gap: 6px;
+}
+
+.clause {
+    padding: 8px 10px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: var(--canvas);
+    font-size: 12.5px;
+}
+
+.clause summary {
+    cursor: pointer;
+    font-weight: 500;
+}
+
+.clause p {
+    margin-top: 8px;
+    color: var(--ink-2);
+    line-height: 1.55;
+}
+
+/* Outcome extras */
+.citations {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+}
+
+.summary {
+    display: grid;
+    gap: 4px;
+    padding-top: 10px;
+    border-top: 1px dashed var(--line-2);
+    color: var(--ink-2);
+    font-size: 12.5px;
+}
+
+/* Trace extras */
+.logTool {
+    padding-left: 18px;
+    color: var(--muted);
+}
+
+.logGuard {
+    color: var(--warn);
 }

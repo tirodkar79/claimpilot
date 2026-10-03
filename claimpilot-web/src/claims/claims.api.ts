@@ -1,8 +1,8 @@
 import { httpClient } from '../api/http-client';
 
-/** Mirrors the API's ClaimView, ClaimFacts and ClaimOutcome (claimpilot-api/src/claims). */
+/** Mirrors the API's ClaimView, ClaimFacts, ClaimOutcome and PolicyFindings (claimpilot-api/src). */
 export type ClaimStatus = 'triaging' | 'completed';
-export type ClaimDecision = 'NEED_INFO' | 'PENDING' | 'REFER';
+export type ClaimDecision = 'NEED_INFO' | 'PENDING' | 'REJECT' | 'REFER';
 
 export interface ClaimFacts {
     flightNumber: string | null;
@@ -13,9 +13,32 @@ export interface ClaimFacts {
     claimedCause: string | null;
 }
 
+export interface ClauseCitation {
+    clauseId: string;
+    title: string;
+}
+
 export interface ClaimOutcome {
     decision: ClaimDecision;
     reasons: string[];
+    citations: ClauseCitation[];
+}
+
+export interface PolicyClause {
+    id: string;
+    title: string;
+    text: string;
+}
+
+/** Policy agent result after the API checked its citations (claimpilot-api/src/agents/policy.agent.ts). */
+export interface PolicyFindings {
+    policyId: string;
+    delayMeasure: 'departure' | 'arrival';
+    relevantExclusions: { type: string; clauseId: string; summary: string }[];
+    summary: string;
+    citedClauses: PolicyClause[];
+    droppedCitations: string[];
+    delayMeasureMismatch: boolean;
 }
 
 export interface Claim {
@@ -27,6 +50,9 @@ export interface Claim {
     status: ClaimStatus;
     facts?: ClaimFacts;
     outcome?: ClaimOutcome;
+    evidence?: { policy?: PolicyFindings };
+    /** Orchestrator's summary for the reviewer; informational only. */
+    summary?: string;
     createdAt: string;
 }
 

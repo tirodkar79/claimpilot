@@ -3,14 +3,41 @@ import { Test } from '@nestjs/testing';
 import { MongoMemoryServer } from 'mongodb-memory-server';
 import request from 'supertest';
 import { LANGUAGE_MODEL } from '../agents/language-model.provider';
-import { mockLanguageModel } from '../agents/testing/mock-language-model';
+import { mockLanguageModel, type MockCall, type MockStep } from '../agents/testing/mock-language-model';
 
 const CLAIMANT = { 'x-api-key': 'claimant-key' };
 const REVIEWER = { 'x-api-key': 'reviewer-key' };
 
 let mongo: MongoMemoryServer;
 let app: INestApplication;
-let modelReply = '';
+let intakeReply: Record<string, unknown> = {};
+
+/** A flight date inside P-77's cover and claim deadline, whenever the test runs. */
+const recentFlightDate = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
+
+const policyReading = {
+    delayMeasure: 'departure',
+    relevantExclusions: [{ type: 'severe_weather', clauseId: '7.3', summary: 'Fog delays are excluded.' }],
+    summary: 'Delay is measured from departure. Fog could trigger the weather exclusion.',
+    citedClauseIds: ['4.1', '7.3'],
+};
+
+/**
+ * Plays every agent with one shared mock model, told apart by their instructions: tool-using agents
+ * call one tool, then answer.
+ * @param call What the model was asked.
+ */
+function respond(call: MockCall): MockStep {
+    if (call.system.includes('You extract facts')) return { text: JSON.stringify(intakeReply) };
+    if (call.system.includes('You coordinate')) {
+        return call.hasToolResult
+            ? { text: 'Policy P-77 covers the flight; fog may be excluded under 7.3.' }
+            : { toolCall: { name: 'consultPolicyAgent', input: { focus: 'cover and exclusions' } } };
+    }
+    return call.hasToolResult
+        ? { text: JSON.stringify(policyReading) }
+        : { toolCall: { name: 'searchPolicyClauses', input: { query: 'weather exclusion' } } };
+}
 
 // Boots the real app (guards, filter, Mongo, SSE) with only the language model mocked.
 beforeAll(async () => {
@@ -26,7 +53,7 @@ beforeAll(async () => {
     const { AppModule } = require('../app.module') as typeof import('../app.module');
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] })
         .overrideProvider(LANGUAGE_MODEL)
-        .useValue(mockLanguageModel(() => modelReply))
+        .useValue(mockLanguageModel(respond))
         .compile();
     app = moduleRef.createNestApplication();
     await app.init();
@@ -38,15 +65,16 @@ afterAll(async () => {
 });
 
 /**
- * Reads a claim's SSE stream to completion and returns the event types.
+ * Reads a claim's SSE stream to completion and returns `actor:type` per event.
  * @param id Claim id.
  */
-async function streamedEventTypes(id: string): Promise<string[]> {
+async function streamedEvents(id: string): Promise<string[]> {
     const res = await request(app.getHttpServer()).get(`/claims/${id}/events`).set(CLAIMANT).buffer(true);
     return res.text
         .split('\n')
         .filter((line) => line.startsWith('data: '))
-        .map((line) => JSON.parse(line.slice(6)).type);
+        .map((line) => JSON.parse(line.slice(6)))
+        .map((event: { actor: string; type: string }) => `${event.actor}:${event.type}`);
 }
 
 describe('Claims API', () => {
@@ -64,52 +92,83 @@ describe('Claims API', () => {
         );
     });
 
-    it('triages a complete claim to PENDING and streams the full trace', async () => {
-        modelReply = JSON.stringify({
+    it('delegates to the Policy agent and streams every step', async () => {
+        intakeReply = {
             flightNumber: '6E-2134',
-            flightDate: '2026-09-12',
+            flightDate: recentFlightDate,
             origin: 'BOM',
             destination: 'DEL',
             claimedDelayMinutes: 240,
-            claimedCause: null,
-        });
+            claimedCause: 'fog',
+        };
 
         const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
         expect(created.body).toMatchObject({ status: 'triaging', customerId: 'C-1042' });
 
-        expect(await streamedEventTypes(created.body.id)).toEqual([
-            'triage.started',
-            'agent.started',
-            'agent.completed',
-            'decision',
-            'triage.completed',
+        expect(await streamedEvents(created.body.id)).toEqual([
+            'orchestrator:triage.started',
+            'intake:agent.started',
+            'intake:agent.completed',
+            'orchestrator:agent.started',
+            'orchestrator:agent.delegated',
+            'policy:agent.started',
+            'policy:tool.called',
+            'policy:agent.completed',
+            'orchestrator:agent.completed',
+            'orchestrator:decision',
+            'orchestrator:triage.completed',
         ]);
 
         const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(REVIEWER).expect(200);
         expect(claim.body).toMatchObject({
             status: 'completed',
             facts: { flightNumber: '6E2134', claimedDelayMinutes: 240 },
-            outcome: { decision: 'PENDING' },
+            outcome: { decision: 'PENDING', citations: [{ clauseId: '2.1' }, { clauseId: '9.2' }] },
+            evidence: {
+                policy: {
+                    policyId: 'P-77',
+                    relevantExclusions: [{ clauseId: '7.3' }],
+                    citedClauses: [{ id: '4.1' }, { id: '7.3' }],
+                    droppedCitations: [],
+                },
+            },
+            summary: 'Policy P-77 covers the flight; fog may be excluded under 7.3.',
         });
     });
 
-    it('asks for missing facts', async () => {
-        modelReply = JSON.stringify({
+    it('rejects a flight outside the cover period, citing the clause', async () => {
+        intakeReply = { ...intakeReply, flightDate: recentFlightDate };
+        const expired = { ...body, policyId: 'P-12' };
+
+        const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(expired).expect(202);
+        await streamedEvents(created.body.id);
+
+        const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
+        expect(claim.body.outcome).toMatchObject({
+            decision: 'REJECT',
+            citations: [{ clauseId: '2.1', title: 'Period of cover' }],
+        });
+    });
+
+    it('asks for missing facts without consulting any other agent', async () => {
+        intakeReply = {
             flightNumber: null,
             flightDate: null,
             origin: null,
             destination: null,
             claimedDelayMinutes: 240,
             claimedCause: null,
-        });
+        };
 
         const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
-        await streamedEventTypes(created.body.id);
+        const events = await streamedEvents(created.body.id);
+        expect(events.filter((event) => event.startsWith('policy:'))).toEqual([]);
 
         const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
         expect(claim.body.outcome).toEqual({
             decision: 'NEED_INFO',
             reasons: ['What is your flight number (for example 6E-2134)?', 'On what date was your flight?'],
+            citations: [],
         });
     });
 

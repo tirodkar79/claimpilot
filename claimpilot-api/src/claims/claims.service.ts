@@ -1,6 +1,6 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { ClaimFacts } from './claim-facts';
-import type { Claim } from './claim.schema';
+import type { Claim, ClaimEvidence } from './claim.schema';
 import { ClaimTriageService } from './claim-triage.service';
 import type { ClaimOutcome, ClaimStatus } from './claims.constants';
 import { ClaimsRepository } from './claims.repository';
@@ -16,6 +16,8 @@ export interface ClaimView {
     status: ClaimStatus;
     facts?: ClaimFacts;
     outcome?: ClaimOutcome;
+    evidence?: ClaimEvidence;
+    summary?: string;
     createdAt: string;
 }
 
@@ -67,6 +69,8 @@ function toView(claim: Claim): ClaimView {
         status: claim.status,
         facts: claim.facts,
         outcome: claim.outcome,
+        evidence: claim.evidence,
+        summary: claim.summary,
         createdAt: claim.createdAt.toISOString(),
     };
 }
