@@ -1,0 +1,68 @@
+/* Design tokens from design/design.html. Light is the default; dark is selected, not inverted. */
+:root,
+[data-theme='light'] {
+    --page: #ece8de;
+    --canvas: #faf8f3;
+    --surface: #ffffff;
+    --surface-2: #f4f1ea;
+    --sunken: #efebe2;
+    --ink: #12141b;
+    --ink-2: #4b505e;
+    --muted: #8c909c;
+    --line: #e3ded3;
+    --line-2: #d4cec1;
+    --accent: #2747f5;
+    --accent-ink: #ffffff;
+    --accent-soft: #e7ebff;
+    --accent-line: #c6d0ff;
+    --amber: #e39b0b;
+    --amber-soft: #fff3d6;
+    --ok: #0f7a55;
+    --ok-bg: #e2f3eb;
+    --bad: #c2321d;
+    --bad-bg: #fbe5e0;
+    --warn: #a86200;
+    --warn-bg: #fdefd6;
+    --info: #2747f5;
+    --info-bg: #e7ebff;
+    --shadow: 0 1px 0 rgba(18, 20, 27, 0.04), 0 24px 60px -24px rgba(18, 20, 27, 0.18);
+    color-scheme: light;
+}
+
+[data-theme='dark'] {
+    --page: #05070b;
+    --canvas: #0c1018;
+    --surface: #121723;
+    --surface-2: #0f141e;
+    --sunken: #0a0e15;
+    --ink: #eceef4;
+    --ink-2: #a6adbd;
+    --muted: #6a7184;
+    --line: #212836;
+    --line-2: #2c3446;
+    --accent: #6f87ff;
+    --accent-ink: #0a0e15;
+    --accent-soft: #1a2148;
+    --accent-line: #2e3a78;
+    --amber: #f5b544;
+    --amber-soft: #2c2108;
+    --ok: #3fd49a;
+    --ok-bg: #0e2a20;
+    --bad: #ff7b67;
+    --bad-bg: #341613;
+    --warn: #f5b544;
+    --warn-bg: #2e220a;
+    --info: #8ea2ff;
+    --info-bg: #1a2148;
+    --shadow: 0 1px 0 rgba(255, 255, 255, 0.03), 0 30px 70px -30px rgba(0, 0, 0, 0.8);
+    color-scheme: dark;
+}
+
+:root {
+    --font-display: 'Instrument Serif', Georgia, serif;
+    --font-ui: Inter, system-ui, -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'JetBrains Mono', ui-monospace, Menlo, monospace;
+    --radius-sm: 9px;
+    --radius-md: 14px;
+    --radius-lg: 20px;
+}
