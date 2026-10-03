@@ -84,13 +84,21 @@ export class TraceService {
         message: string,
         extra?: { data?: Record<string, unknown> },
     ): Promise<TraceEventView> {
-        const last = await this.repository.lastSeq(claimId);
-        return this.forClaim(claimId, last).record(actor, type, message, extra);
+        return (await this.continueClaim(claimId)).record(actor, type, message, extra);
+    }
+
+    /**
+     * Recorder that continues after a claim's stored events (a claim can be triaged again after NEED_INFO).
+     * @param claimId Claim id.
+     */
+    async continueClaim(claimId: string): Promise<TraceRecorder> {
+        return this.forClaim(claimId, await this.repository.lastSeq(claimId));
     }
 
     /**
      * Streams a claim's events: the full stored history first (including later events such as a review), then
-     * live events until triage completes. Live events are buffered while history loads and de-duplicated by `seq`.
+     * live events until the latest triage run completes. Live events are buffered while history loads and
+     * de-duplicated by `seq`.
      * @param claimId Claim id.
      */
     stream(claimId: string): Observable<TraceEventView> {
@@ -106,6 +114,8 @@ export class TraceService {
                 lastSeq = event.seq;
                 subscriber.next(event);
                 if (event.type === TERMINAL_TRACE_EVENT) triageFinished = true;
+                // A NEED_INFO answer starts another run: keep streaming until that one completes too.
+                if (event.type === 'details.added' || event.type === 'triage.started') triageFinished = false;
             };
 
             const live = this.live$.pipe(filter((event) => event.claimId === claimId)).subscribe((event) => {

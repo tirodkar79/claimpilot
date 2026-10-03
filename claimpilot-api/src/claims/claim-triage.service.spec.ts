@@ -32,6 +32,7 @@ const policyFindings: PolicyFindings = {
     summary: 'No exclusions apply.',
     citedClauses: [],
     droppedCitations: [],
+    droppedExclusions: [],
 };
 
 const flightFindings: FlightFindings = {
@@ -120,7 +121,7 @@ function setup(
         { investigate } as unknown as FlightAgent,
         { check: checkWeather } as unknown as WeatherAgent,
         { check: checkIntegrity } as unknown as IntegrityService,
-        { forClaim: () => recorder } as unknown as TraceService,
+        { continueClaim: async () => recorder } as unknown as TraceService,
     );
     const target = { ...claim, ...overrides.claim } as Claim;
     return {

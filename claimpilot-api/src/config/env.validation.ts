@@ -69,6 +69,8 @@ const envSchema = z
         HTTP_MAX_RETRIES: z.coerce.number().int().min(0).max(5).default(2),
         CORS_ORIGINS: csv.prefault('http://localhost:5173'),
         MODEL: model.prefault('google:gemini-3.5-flash-lite'),
+        /** Optional second model, used when MODEL hits its quota or is overloaded. Same format as MODEL. */
+        MODEL_FALLBACK: model.optional(),
         GOOGLE_GENERATIVE_AI_API_KEY: z.string().optional(),
         GROQ_API_KEY: z.string().optional(),
         OLLAMA_BASE_URL: z.url().default('http://localhost:11434/api'),
@@ -101,13 +103,16 @@ const envSchema = z
                 message: 'required when FLIGHT_DATA_MODE=live',
             });
         }
-        const keyVariable = PROVIDER_API_KEY_VARIABLE[env.MODEL.provider];
-        if (keyVariable && !env[keyVariable]) {
-            ctx.addIssue({
-                code: 'custom',
-                path: [keyVariable],
-                message: `required when MODEL uses ${env.MODEL.provider}`,
-            });
+        for (const variable of ['MODEL', 'MODEL_FALLBACK'] as const) {
+            const provider = env[variable]?.provider;
+            const keyVariable = provider && PROVIDER_API_KEY_VARIABLE[provider];
+            if (keyVariable && !env[keyVariable]) {
+                ctx.addIssue({
+                    code: 'custom',
+                    path: [keyVariable],
+                    message: `required when ${variable} uses ${provider}`,
+                });
+            }
         }
     });
 

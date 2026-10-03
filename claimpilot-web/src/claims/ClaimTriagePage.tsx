@@ -1,6 +1,11 @@
+import { useQueryClient } from '@tanstack/react-query';
+import { useState } from 'react';
 import { useParams } from 'react-router';
+import { roleStore } from '../auth/role.store';
+import { usePersistedStore } from '../lib/persisted-store';
 import { FactsCard } from './triage/FactsCard';
 import { FlightCard } from './triage/FlightCard';
+import { NeedInfoReply } from './triage/NeedInfoReply';
 import { IntegrityCard } from './triage/IntegrityCard';
 import { OutcomeCard } from './triage/OutcomeCard';
 import { PolicyCard } from './triage/PolicyCard';
@@ -15,7 +20,17 @@ import styles from './ClaimTriagePage.module.css';
 export function ClaimTriagePage() {
     const { claimId = '' } = useParams();
     const claim = useClaim(claimId);
-    const stream = useClaimEvents(claimId);
+    const [run, setRun] = useState(0);
+    const stream = useClaimEvents(claimId, run);
+    const [role] = usePersistedStore(roleStore);
+    const queryClient = useQueryClient();
+    const waitingForClaimant = claim.data?.status === 'completed' && claim.data.outcome?.decision === 'NEED_INFO';
+
+    /** The claimant answered: show the claim as triaging again and follow the new run. */
+    const followNewRun = () => {
+        void queryClient.invalidateQueries({ queryKey: ['claim', claimId] });
+        setRun((current) => current + 1);
+    };
 
     if (claim.isError) {
         return (
@@ -64,6 +79,10 @@ export function ClaimTriagePage() {
                     summary={claim.data?.summary}
                     summaryCheck={claim.data?.safety?.summary}
                 />
+                {waitingForClaimant && role === 'claimant' && <NeedInfoReply claimId={claimId} onSent={followNewRun} />}
+                {waitingForClaimant && role === 'reviewer' && (
+                    <p className={styles.waiting}>Waiting for the claimant to reply with the missing details.</p>
+                )}
                 {claim.data?.review && <ReviewCard review={claim.data.review} />}
             </div>
             <TraceLog events={stream.events} status={stream.status} error={stream.error} />

@@ -1,5 +1,14 @@
 /** Who produced a trace event. Grows as sub-agents are added. */
-export const TRACE_ACTORS = ['orchestrator', 'intake', 'policy', 'flight', 'weather', 'integrity', 'reviewer'] as const;
+export const TRACE_ACTORS = [
+    'orchestrator',
+    'intake',
+    'policy',
+    'flight',
+    'weather',
+    'integrity',
+    'reviewer',
+    'claimant',
+] as const;
 export type TraceActor = (typeof TRACE_ACTORS)[number];
 
 export const TRACE_EVENT_TYPES = [
@@ -19,6 +28,8 @@ export const TRACE_EVENT_TYPES = [
     'triage.completed',
     /** A person decided a referred claim (after triage completed). */
     'review.decided',
+    /** The claimant answered a NEED_INFO outcome; triage runs again. */
+    'details.added',
 ] as const;
 export type TraceEventType = (typeof TRACE_EVENT_TYPES)[number];
 

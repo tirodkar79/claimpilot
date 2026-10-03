@@ -10,6 +10,7 @@ const findings: PolicyFindings = {
     summary: 'Fog could trigger the weather exclusion.',
     citedClauses: [{ id: '7.3', title: 'Severe weather', text: 'We do not pay for a delay caused by severe weather.' }],
     droppedCitations: [],
+    droppedExclusions: [],
     delayMeasureMismatch: false,
 };
 
@@ -41,5 +42,17 @@ describe('PolicyCard', () => {
         const warning = screen.getByRole('status');
         expect(warning).toHaveTextContent("clauses that don't exist: 12.9");
         expect(warning).toHaveTextContent('misread how delay is measured');
+    });
+
+    it("says which exclusions were set aside because the claimed cause doesn't support them", () => {
+        render(
+            <PolicyCard
+                policyId="P-77"
+                findings={{ ...findings, droppedExclusions: [{ type: 'industrial_action', clauseId: '7.4' }] }}
+            />,
+        );
+        expect(screen.getByRole('status')).toHaveTextContent(
+            "Set aside §7.4 Industrial action: the claimed cause doesn't support it.",
+        );
     });
 });

@@ -14,6 +14,9 @@ import { ClaimTriageService } from '../claims/claim-triage.service';
 import { ClaimsRepository } from '../claims/claims.repository';
 import { localDate } from '../common/utils/local-date';
 import { EnvConfig } from '../config/env.validation';
+import { FlightDataService } from '../flights/flight-data.service';
+import type { FlightLookup } from '../flights/flight.types';
+import { recordedLegs } from '../flights/recorded-flights';
 import { MongoModule } from '../mongo/mongo.module';
 import { TraceEvent } from '../trace/trace-event.schema';
 import { TraceRepository } from '../trace/trace.repository';
@@ -116,6 +119,16 @@ async function main(): Promise<void> {
         .useModule(EvalMongoModule)
         .overrideProvider(OpenMeteoMcpService)
         .useValue(weather)
+        // Cases are built on the recorded flights, whatever FLIGHT_DATA_MODE the local .env sets.
+        .overrideProvider(FlightDataService)
+        .useValue({
+            lookup: async (flightNumber: string, date: string): Promise<FlightLookup> => ({
+                flightNumber,
+                date,
+                legs: recordedLegs(flightNumber, date),
+                source: 'recorded',
+            }),
+        })
         .compile();
     // Progress and metrics only; agent failures are in each claim's trace and the report.
     moduleRef.useLogger(new ConsoleLogger({ logLevels: ['log', 'warn'] }));

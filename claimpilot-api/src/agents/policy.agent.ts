@@ -28,6 +28,23 @@ const policyReadingSchema = z.object({
 });
 
 type PolicyReading = z.infer<typeof policyReadingSchema>;
+type ExclusionType = (typeof EXCLUSION_TYPES)[number];
+
+/**
+ * Exclusions that depend on what caused the delay, with words a claimant would use for that cause. Without
+ * airline delay codes the claimed cause is the only cause signal, so an exclusion of this kind is kept only
+ * when the claimed cause relates to it, or, if no cause is given, when evidence can check it.
+ */
+const CAUSE_KEYWORDS: Partial<Record<ExclusionType, RegExp>> = {
+    // eslint-disable-next-line camelcase -- keys are exclusion type ids
+    severe_weather:
+        /weather|fog|mist|smog|haze|visibility|storm|thunder|lightning|rain|monsoon|flood|snow|ice|wind|cyclone|hurricane|typhoon|hail/i,
+    // eslint-disable-next-line camelcase -- keys are exclusion type ids
+    industrial_action: /strike|industrial|walk-?out|union|work-to-rule|labou?r dispute/i,
+};
+
+/** Cause-specific exclusions that evidence can confirm or rule out (weather records). */
+const CHECKABLE_EXCLUSIONS = new Set<ExclusionType>(['severe_weather']);
 
 /** Policy agent result, after code has checked its citations against the real wording. */
 export interface PolicyFindings extends Omit<PolicyReading, 'citedClauseIds'> {
@@ -38,6 +55,8 @@ export interface PolicyFindings extends Omit<PolicyReading, 'citedClauseIds'> {
     droppedCitations: string[];
     /** True when the model's reading of the delay measure disagreed with the policy schedule. */
     delayMeasureMismatch: boolean;
+    /** Cause-specific exclusions the model flagged that the claimed cause doesn't support. */
+    droppedExclusions: { type: ExclusionType; clauseId: string }[];
 }
 
 /** Hard cap on clause searches per claim; the agent is told to answer once it is reached. */
@@ -51,7 +70,9 @@ You may search at most ${MAX_CLAUSE_SEARCHES} times.
 
 Report:
 - how the wording says delay is measured (from scheduled departure or scheduled arrival);
-- every exclusion that could apply to this claim, given its claimed cause;
+- every exclusion that could apply to this claim, given its claimed cause. Weather and industrial-action
+  exclusions depend on the cause: report them only when the claimed cause is about weather or a strike
+  (with no cause given, report the weather exclusion, which records can check, but not the strike one);
 - the clause numbers you relied on.
 
 Rules:
@@ -103,7 +124,17 @@ export class PolicyAgent {
             maxSteps: MAX_CLAUSE_SEARCHES + 1,
             structuredOutput: { schema: policyReadingSchema, jsonPromptInjection: true },
         });
-        return validateReading(policy, policyReadingSchema.parse(result.object));
+        const findings = validateReading(policy, policyReadingSchema.parse(result.object), facts.claimedCause);
+        if (findings.droppedExclusions.length) {
+            const dropped = findings.droppedExclusions.map((e) => `§${e.clauseId} (${e.type})`).join(', ');
+            const why = facts.claimedCause
+                ? `the claimed cause "${facts.claimedCause}" has nothing to do with it`
+                : 'no cause was given and no evidence source can check it';
+            await recorder.record('policy', 'guard.enforced', `Dropped ${dropped}: ${why}`, {
+                data: { droppedExclusions: findings.droppedExclusions },
+            });
+        }
+        return findings;
     }
 
     /**
@@ -136,19 +167,39 @@ export class PolicyAgent {
 }
 
 /**
- * Keeps only citations that exist in the policy and flags disagreement with the schedule.
+ * Whether a flagged exclusion fits the claimed cause. Exclusions that don't depend on the cause always fit.
+ * @param type Exclusion type.
+ * @param claimedCause Cause the claimant gave, or null.
+ */
+function fitsClaimedCause(type: ExclusionType, claimedCause: string | null): boolean {
+    const keywords = CAUSE_KEYWORDS[type];
+    if (!keywords) return true;
+    // With no stated cause, keep only what evidence can settle: weather records can confirm or rule out a
+    // weather exclusion, but nothing checks a strike, so it would refer the claim on no grounds at all.
+    if (!claimedCause) return CHECKABLE_EXCLUSIONS.has(type);
+    return keywords.test(claimedCause);
+}
+
+/**
+ * Keeps only citations that exist in the policy, drops cause-specific exclusions unrelated to the claimed
+ * cause, and flags disagreement with the schedule.
  * @param policy Policy that was read.
  * @param reading Model output.
+ * @param claimedCause Cause the claimant gave, or null.
  */
-export function validateReading(policy: Policy, reading: PolicyReading): PolicyFindings {
+export function validateReading(policy: Policy, reading: PolicyReading, claimedCause: string | null): PolicyFindings {
     const clauseIds = new Set(policy.clauses.map((clause) => clause.id));
     const cited = new Set([...reading.citedClauseIds, ...reading.relevantExclusions.map((e) => e.clauseId)]);
+    const existing = reading.relevantExclusions.filter((exclusion) => clauseIds.has(exclusion.clauseId));
 
     return {
         policyId: policy.policyId,
         delayMeasure: policy.delayMeasure,
         delayMeasureMismatch: reading.delayMeasure !== policy.delayMeasure,
-        relevantExclusions: reading.relevantExclusions.filter((exclusion) => clauseIds.has(exclusion.clauseId)),
+        relevantExclusions: existing.filter((exclusion) => fitsClaimedCause(exclusion.type, claimedCause)),
+        droppedExclusions: existing
+            .filter((exclusion) => !fitsClaimedCause(exclusion.type, claimedCause))
+            .map(({ type, clauseId }) => ({ type, clauseId })),
         summary: reading.summary,
         citedClauses: policy.clauses.filter((clause) => cited.has(clause.id)),
         droppedCitations: [...cited].filter((id) => !clauseIds.has(id)),

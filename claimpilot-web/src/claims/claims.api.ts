@@ -1,4 +1,5 @@
 import { httpClient } from '../api/http-client';
+import type { Page } from '../api/page';
 
 /** Mirrors the API's ClaimView, ClaimFacts, ClaimOutcome and PolicyFindings (claimpilot-api/src). */
 export type ClaimStatus = 'triaging' | 'completed';
@@ -99,6 +100,8 @@ export interface PolicyFindings {
     summary: string;
     citedClauses: PolicyClause[];
     droppedCitations: string[];
+    /** Weather/strike exclusions flagged that the claimed cause doesn't support (absent on older claims). */
+    droppedExclusions?: { type: string; clauseId: string }[];
     delayMeasureMismatch: boolean;
 }
 
@@ -152,6 +155,45 @@ export interface CreateClaimRequest {
  */
 export async function createClaim(body: CreateClaimRequest): Promise<Claim> {
     const { data } = await httpClient.post<Claim>('/claims', body);
+    return data;
+}
+
+/** One row of the claims history. Mirrors ClaimListItem in claimpilot-api/src/claims/claims.service.ts. */
+export interface ClaimListItem {
+    id: string;
+    customerId: string;
+    policyId: string;
+    flightNumber: string | null;
+    flightDate: string | null;
+    status: ClaimStatus;
+    decision?: ClaimDecision;
+    payout?: { amount: number; currency: string };
+    reviewDecision?: 'APPROVE' | 'REJECT' | 'NEED_INFO';
+    reviewStatus?: 'pending' | 'resolved';
+    createdAt: string;
+}
+
+/**
+ * Claims history, newest first.
+ * @param customerId Only this customer's claims, when given.
+ * @param page 1-based page.
+ */
+export async function listClaims(customerId: string | undefined, page: number): Promise<Page<ClaimListItem>> {
+    const { data } = await httpClient.get<Page<ClaimListItem>>('/claims', {
+        params: { customerId: customerId || undefined, page, limit: CLAIMS_PAGE_SIZE },
+    });
+    return data;
+}
+
+export const CLAIMS_PAGE_SIZE = 25;
+
+/**
+ * Answers a NEED_INFO outcome; the claim is triaged again (follow it on the same event stream).
+ * @param id Claim id.
+ * @param message The missing details.
+ */
+export async function addClaimDetails(id: string, message: string): Promise<Claim> {
+    const { data } = await httpClient.post<Claim>(`/claims/${id}/details`, { message });
     return data;
 }
 

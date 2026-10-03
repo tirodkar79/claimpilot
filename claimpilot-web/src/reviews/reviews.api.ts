@@ -1,4 +1,5 @@
 import { httpClient } from '../api/http-client';
+import type { Page } from '../api/page';
 import type { ClaimReview } from '../claims/claims.api';
 
 /** Mirrors ReviewItem in claimpilot-api/src/reviews/reviews.service.ts. */
@@ -15,13 +16,6 @@ export interface ReviewItem {
     payoutOptions: { amount: number; currency: string; minDelayMinutes: number }[];
     review: ClaimReview;
     createdAt: string;
-}
-
-export interface Page<T> {
-    items: T[];
-    total: number;
-    page: number;
-    limit: number;
 }
 
 export interface ReviewDecision {

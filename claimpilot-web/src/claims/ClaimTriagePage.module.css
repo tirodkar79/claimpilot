@@ -51,6 +51,14 @@
     font-size: 12px;
 }
 
+.waiting {
+    padding: 10px 14px;
+    border: 1px dashed var(--line-2);
+    border-radius: var(--radius-md);
+    color: var(--ink-2);
+    font-size: 13px;
+}
+
 .error {
     color: var(--bad);
 }

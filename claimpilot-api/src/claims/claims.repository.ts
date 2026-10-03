@@ -33,6 +33,16 @@ export class ClaimsRepository extends MongoRepository<Claim> {
     }
 
     /**
+     * Claims newest first, optionally for one customer.
+     * @param customerId Only this customer's claims, when given.
+     * @param page 1-based page.
+     * @param limit Page size.
+     */
+    findHistory(customerId: string | undefined, page: number, limit: number): Promise<Page<Claim>> {
+        return this.paginate({ filter: customerId ? { customerId } : {}, page, limit, sort: { createdAt: -1 } });
+    }
+
+    /**
      * Claims in the review queue: pending oldest first (fairest order), resolved newest first.
      * @param status Review status.
      * @param page 1-based page.

@@ -335,3 +335,40 @@
     font-family: var(--font-mono);
     font-size: 10.5px;
 }
+
+/* NEED_INFO reply */
+.reply {
+    border-color: var(--info);
+}
+
+.replyInput {
+    padding: 8px 10px;
+    border: 1px solid var(--line-2);
+    border-radius: 10px;
+    background: var(--canvas);
+    color: var(--ink);
+    font: inherit;
+    font-size: 13px;
+    resize: vertical;
+}
+
+.replyButton {
+    align-self: flex-start;
+    height: 38px;
+    padding: 0 18px;
+    border: 1px solid var(--accent);
+    border-radius: 10px;
+    background: var(--accent);
+    color: var(--accent-ink);
+    font-weight: 600;
+}
+
+.replyButton:disabled {
+    opacity: 0.55;
+    cursor: not-allowed;
+}
+
+.replyError {
+    color: var(--bad);
+    font-size: 12px;
+}

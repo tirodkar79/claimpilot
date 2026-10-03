@@ -9,3 +9,10 @@ export const createClaimSchema = z.object({
 });
 
 export type CreateClaimDto = z.infer<typeof createClaimSchema>;
+
+/** Request body of `POST /claims/:id/details`: the claimant's answer to a NEED_INFO outcome. */
+export const claimDetailsSchema = z.object({
+    message: z.string().trim().min(2).max(1000).describe('The missing details, e.g. "Flight 6E-2134 on 30 September"'),
+});
+
+export type ClaimDetailsDto = z.infer<typeof claimDetailsSchema>;

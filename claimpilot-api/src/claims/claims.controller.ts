@@ -9,10 +9,22 @@ import {
     MessageEvent,
     Param,
     Post,
+    Query,
     Sse,
+    DefaultValuePipe,
+    ParseIntPipe,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { ApiAcceptedResponse, ApiBody, type ApiBodyOptions, ApiHeader, ApiOperation, ApiTags } from '@nestjs/swagger';
+import {
+    ApiAcceptedResponse,
+    ApiBody,
+    type ApiBodyOptions,
+    ApiHeader,
+    ApiOperation,
+    ApiQuery,
+    ApiTags,
+} from '@nestjs/swagger';
+import type { Page } from '../mongo/mongo.repository';
 import { map, Observable } from 'rxjs';
 import { z } from 'zod';
 import { Role } from '../auth/auth.constants';
@@ -21,8 +33,8 @@ import { ZodValidationPipe } from '../common/pipes/zod-validation.pipe';
 import { EnvConfig } from '../config/env.validation';
 import { TraceService } from '../trace/trace.service';
 import { FAILURE_TARGETS, type FailureTarget } from './claims.constants';
-import { ClaimsService, ClaimView } from './claims.service';
-import { createClaimSchema, type CreateClaimDto } from './create-claim.dto';
+import { ClaimsService, ClaimView, type ClaimListItem } from './claims.service';
+import { claimDetailsSchema, createClaimSchema, type ClaimDetailsDto, type CreateClaimDto } from './create-claim.dto';
 
 type OpenApiSchema = Extract<ApiBodyOptions, { schema: unknown }>['schema'];
 
@@ -78,6 +90,24 @@ export class ClaimsController {
     }
 
     /**
+     * Claims history, newest first. Claimants and reviewers both use it; the demo has no per-customer login, so
+     * the web app filters by customer id.
+     * @param customerId Only this customer's claims, when given.
+     * @param page 1-based page.
+     * @param limit Page size (max 100).
+     */
+    @Get()
+    @ApiOperation({ summary: 'List claims, newest first' })
+    @ApiQuery({ name: 'customerId', required: false })
+    list(
+        @Query('customerId') customerId: string | undefined,
+        @Query('page', new DefaultValuePipe(1), ParseIntPipe) page: number,
+        @Query('limit', new DefaultValuePipe(20), ParseIntPipe) limit: number,
+    ): Promise<Page<ClaimListItem>> {
+        return this.claims.list(customerId?.trim() || undefined, page, limit);
+    }
+
+    /**
      * Returns a claim with its extracted facts and outcome once triage finishes.
      * @param id Claim id.
      */
@@ -85,6 +115,23 @@ export class ClaimsController {
     @ApiOperation({ summary: 'Get a claim' })
     get(@Param('id') id: string): Promise<ClaimView> {
         return this.claims.get(id);
+    }
+
+    /**
+     * The claimant's answer to a NEED_INFO outcome. Triage runs again; follow it on the same event stream.
+     * @param id Claim id.
+     * @param body The missing details.
+     */
+    @Post(':id/details')
+    @Roles(Role.Claimant)
+    @HttpCode(HttpStatus.ACCEPTED)
+    @ApiOperation({ summary: 'Answer a NEED_INFO outcome and triage again' })
+    @ApiBody({ schema: z.toJSONSchema(claimDetailsSchema) as OpenApiSchema })
+    addDetails(
+        @Param('id') id: string,
+        @Body(new ZodValidationPipe(claimDetailsSchema)) body: ClaimDetailsDto,
+    ): Promise<ClaimView> {
+        return this.claims.addDetails(id, body);
     }
 
     /**

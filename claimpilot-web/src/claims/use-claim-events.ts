@@ -11,7 +11,11 @@ interface StreamState {
     error?: ApiError;
 }
 
-type StreamAction = { type: 'event'; event: TraceEvent } | { type: 'done' } | { type: 'error'; error: ApiError };
+type StreamAction =
+    | { type: 'event'; event: TraceEvent }
+    | { type: 'done' }
+    | { type: 'error'; error: ApiError }
+    | { type: 'reconnect' };
 
 /**
  * Appends events in sequence order. Events at or below the last seq are dropped, so a reconnect
@@ -28,6 +32,8 @@ function reducer(state: StreamState, action: StreamAction): StreamState {
         }
         case 'done':
             return { ...state, status: 'done' };
+        case 'reconnect':
+            return { ...state, status: state.events.length ? 'streaming' : 'connecting', error: undefined };
         case 'error':
             return { ...state, status: 'error', error: action.error };
         default:
@@ -39,13 +45,15 @@ function reducer(state: StreamState, action: StreamAction): StreamState {
  * Follows a claim's triage live. When triage completes, the claim query is refetched so facts and
  * outcome appear without polling.
  * @param claimId Claim id.
+ * @param run Bump to reconnect after the claim is triaged again (NEED_INFO answered); events already shown stay.
  */
-export function useClaimEvents(claimId: string): StreamState {
+export function useClaimEvents(claimId: string, run = 0): StreamState {
     const queryClient = useQueryClient();
     const [state, dispatch] = useReducer(reducer, { events: [], status: 'connecting' });
 
     useEffect(() => {
         const controller = new AbortController();
+        dispatch({ type: 'reconnect' });
         streamClaimEvents(
             claimId,
             (event) => {
@@ -64,7 +72,7 @@ export function useClaimEvents(claimId: string): StreamState {
                 dispatch({ type: 'error', error: apiError });
             });
         return () => controller.abort();
-    }, [claimId, queryClient]);
+    }, [claimId, run, queryClient]);
 
     return state;
 }

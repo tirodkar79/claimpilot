@@ -90,7 +90,7 @@ export class ClaimTriageService {
      */
     async run(claim: Claim, today = localDate(new Date(), this.timeZone)): Promise<ClaimOutcome> {
         const claimId = String(claim._id);
-        const recorder = this.trace.forClaim(claimId);
+        const recorder = await this.trace.continueClaim(claimId);
         await recorder.record('orchestrator', 'triage.started', 'Triage started');
 
         const facts = await this.extractFacts(claim, today, recorder);

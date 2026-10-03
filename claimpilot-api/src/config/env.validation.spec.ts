@@ -32,6 +32,17 @@ describe('validateEnv', () => {
         expect(() => validateEnv({ ...required, ...override })).toThrow(message);
     });
 
+    it('accepts an optional fallback model and requires its provider key too', () => {
+        expect(validateEnv(required).MODEL_FALLBACK).toBeUndefined();
+        expect(validateEnv({ ...required, MODEL_FALLBACK: 'google:gemini-3.1-flash-lite' }).MODEL_FALLBACK).toEqual({
+            provider: 'google',
+            modelId: 'gemini-3.1-flash-lite',
+        });
+        expect(() => validateEnv({ ...required, MODEL_FALLBACK: 'groq:openai/gpt-oss-120b' })).toThrow(
+            /GROQ_API_KEY: required when MODEL_FALLBACK uses groq/,
+        );
+    });
+
     it('defaults to Gemini and splits MODEL into provider and model id', () => {
         expect(validateEnv(required).MODEL).toEqual({ provider: 'google', modelId: 'gemini-3.5-flash-lite' });
         expect(validateEnv({ ...required, MODEL: 'ollama:qwen2.5:7b' }).MODEL).toEqual({

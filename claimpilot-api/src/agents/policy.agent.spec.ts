@@ -36,24 +36,50 @@ function memoryRecorder() {
 
 describe('validateReading', () => {
     it('attaches the cited clause text', () => {
-        const findings = validateReading(policy, reading);
+        const findings = validateReading(policy, reading, 'fog');
         expect(findings.citedClauses.map((clause) => clause.id)).toEqual(['4.1', '7.3']);
         expect(findings.droppedCitations).toEqual([]);
         expect(findings.delayMeasureMismatch).toBe(false);
     });
 
     it('drops invented clause ids and exclusions that cite them', () => {
-        const findings = validateReading(policy, {
-            ...reading,
-            relevantExclusions: [...reading.relevantExclusions, { type: 'other', clauseId: '12.9', summary: 'x' }],
-            citedClauseIds: ['4.1', '99.1'],
-        });
+        const findings = validateReading(
+            policy,
+            {
+                ...reading,
+                relevantExclusions: [...reading.relevantExclusions, { type: 'other', clauseId: '12.9', summary: 'x' }],
+                citedClauseIds: ['4.1', '99.1'],
+            },
+            'fog',
+        );
         expect(findings.droppedCitations.sort()).toEqual(['12.9', '99.1']);
         expect(findings.relevantExclusions.map((e) => e.clauseId)).toEqual(['7.3']);
     });
 
+    it.each([
+        ['technical fault', ['7.1'], ['7.3', '7.4']],
+        ['dense fog at Delhi', ['7.1', '7.3'], ['7.4']],
+        ['cabin crew went on strike', ['7.1', '7.4'], ['7.3']],
+        [null, ['7.1', '7.3'], ['7.4']],
+    ])('for cause %j keeps %j and drops %j', (cause, kept, dropped) => {
+        const findings = validateReading(
+            policy,
+            {
+                ...reading,
+                relevantExclusions: [
+                    { type: 'known_before_purchase', clauseId: '7.1', summary: 'Known delays.' },
+                    { type: 'severe_weather', clauseId: '7.3', summary: 'Weather.' },
+                    { type: 'industrial_action', clauseId: '7.4', summary: 'Strikes.' },
+                ],
+            },
+            cause,
+        );
+        expect(findings.relevantExclusions.map((e) => e.clauseId)).toEqual(kept);
+        expect(findings.droppedExclusions.map((e) => e.clauseId)).toEqual(dropped);
+    });
+
     it('keeps the schedule’s delay measure and flags a model that misread it', () => {
-        const findings = validateReading(policy, { ...reading, delayMeasure: 'arrival' });
+        const findings = validateReading(policy, { ...reading, delayMeasure: 'arrival' }, 'fog');
         expect(findings.delayMeasure).toBe('departure');
         expect(findings.delayMeasureMismatch).toBe(true);
     });
@@ -76,6 +102,27 @@ describe('PolicyAgent', () => {
                 type: 'tool.called',
                 message: 'searchPolicyClauses("weather exclusion")',
                 data: { tool: 'searchPolicyClauses', query: 'weather exclusion', clauseIds: ['7.3'] },
+            },
+        ]);
+    });
+
+    it('drops a weather exclusion flagged for a technical fault, and traces the correction', async () => {
+        const model = mockLanguageModel(() => ({ text: JSON.stringify(reading) }));
+        const { recorder, events } = memoryRecorder();
+
+        const findings = await new PolicyAgent(model).assess(
+            policy,
+            { ...facts, claimedCause: 'technical fault' },
+            recorder,
+        );
+
+        expect(findings.relevantExclusions).toEqual([]);
+        expect(findings.droppedExclusions).toEqual([{ type: 'severe_weather', clauseId: '7.3' }]);
+        expect(events).toEqual([
+            {
+                type: 'guard.enforced',
+                message: 'Dropped §7.3 (severe_weather): the claimed cause "technical fault" has nothing to do with it',
+                data: { droppedExclusions: [{ type: 'severe_weather', clauseId: '7.3' }] },
             },
         ]);
     });

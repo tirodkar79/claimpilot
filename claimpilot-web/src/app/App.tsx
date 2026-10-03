@@ -1,5 +1,6 @@
 import { QueryClientProvider } from '@tanstack/react-query';
 import { createBrowserRouter, RouterProvider } from 'react-router';
+import { ClaimsHistoryPage } from '../claims/ClaimsHistoryPage';
 import { ClaimTriagePage } from '../claims/ClaimTriagePage';
 import { NewClaimPage } from '../claims/NewClaimPage';
 import { EvalsPage } from '../evals/EvalsPage';
@@ -12,6 +13,11 @@ const router = createBrowserRouter([
         element: <AppShell />,
         children: [
             { index: true, element: <NewClaimPage />, handle: { title: 'New claim' } satisfies RouteHandle },
+            {
+                path: 'claims',
+                element: <ClaimsHistoryPage />,
+                handle: { title: 'Claims' } satisfies RouteHandle,
+            },
             {
                 path: 'reviews',
                 element: <ReviewQueuePage />,

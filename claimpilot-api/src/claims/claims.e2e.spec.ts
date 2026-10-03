@@ -101,6 +101,8 @@ beforeAll(async () => {
         API_KEYS: 'claimant:claimant-key,reviewer:reviewer-key',
         GOOGLE_GENERATIVE_AI_API_KEY: 'unused-in-tests',
         ALLOW_FAILURE_INJECTION: 'true',
+        // Pinned so a developer's local .env (e.g. live flight data) can't change what the tests see.
+        FLIGHT_DATA_MODE: 'fixtures',
     });
     jest.spyOn(Logger.prototype, 'log').mockImplementation();
 
@@ -297,6 +299,54 @@ describe('Claims API', () => {
         });
     });
 
+    it('triages again when the claimant answers a NEED_INFO, keeping one trace', async () => {
+        intakeReply = {
+            flightNumber: null,
+            flightDate: null,
+            origin: null,
+            destination: null,
+            claimedDelayMinutes: 240,
+            claimedCause: 'technical fault',
+        };
+        const created = await request(app.getHttpServer()).post('/claims').set(CLAIMANT).send(body).expect(202);
+        await streamedEvents(created.body.id);
+
+        await request(app.getHttpServer())
+            .post(`/claims/${created.body.id}/details`)
+            .set(REVIEWER)
+            .send({ message: 'x1' })
+            .expect(403);
+
+        intakeReply = {
+            ...intakeReply,
+            flightNumber: '6E-2134',
+            flightDate: recentFlightDate,
+            origin: 'BOM',
+            destination: 'DEL',
+        };
+        policyReply = noExclusions;
+        const answered = await request(app.getHttpServer())
+            .post(`/claims/${created.body.id}/details`)
+            .set(CLAIMANT)
+            .send({ message: `Flight 6E-2134 on ${recentFlightDate}` })
+            .expect(202);
+        expect(answered.body).toMatchObject({ status: 'triaging' });
+        expect(answered.body.message).toContain(`Additional details: Flight 6E-2134 on ${recentFlightDate}`);
+
+        const events = await streamedEvents(created.body.id);
+        expect(events.filter((event) => event === 'orchestrator:triage.completed')).toHaveLength(2);
+        expect(events).toContain('claimant:details.added');
+
+        const claim = await request(app.getHttpServer()).get(`/claims/${created.body.id}`).set(CLAIMANT);
+        expect(claim.body.outcome).toMatchObject({ decision: 'APPROVE', payout: { amount: 2000 } });
+
+        await request(app.getHttpServer())
+            .post(`/claims/${created.body.id}/details`)
+            .set(CLAIMANT)
+            .send({ message: 'more' })
+            .expect(409);
+    });
+
     /**
      * Submits a claim and waits for triage to finish.
      * @param claimBody Request body.
@@ -468,6 +518,37 @@ describe('Claims API', () => {
             .expect(200);
         expect(detail.body).toMatchObject({ id: String(latest._id), cases: [{ id: 'evidenced-tier' }] });
         await request(app.getHttpServer()).get('/evals/runs/not-an-id').set(REVIEWER).expect(404);
+    });
+
+    it('lists claims newest first, optionally for one customer, for either role', async () => {
+        intakeReply = {
+            flightNumber: '6E-2134',
+            flightDate: recentFlightDate,
+            origin: 'BOM',
+            destination: 'DEL',
+            claimedDelayMinutes: 240,
+            claimedCause: 'technical fault',
+        };
+        policyReply = noExclusions;
+        const first = await submitAndWait(body);
+        const second = await submitAndWait({ ...body, customerId: 'C-2077' });
+
+        const all = await request(app.getHttpServer()).get('/claims').set(REVIEWER).expect(200);
+        expect(all.body).toMatchObject({ total: 2, page: 1 });
+        expect(all.body.items.map((item: { id: string }) => item.id)).toEqual([second.id, first.id]);
+
+        const mine = await request(app.getHttpServer()).get('/claims?customerId=C-1042').set(CLAIMANT).expect(200);
+        expect(mine.body.items).toEqual([
+            expect.objectContaining({
+                id: first.id,
+                flightNumber: '6E2134',
+                flightDate: recentFlightDate,
+                status: 'completed',
+                decision: 'APPROVE',
+                payout: { amount: 2000, currency: 'INR' },
+            }),
+        ]);
+        await request(app.getHttpServer()).get('/claims').expect(401);
     });
 
     it('returns 404 for unknown or malformed claim ids', async () => {

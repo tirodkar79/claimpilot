@@ -54,6 +54,25 @@ describe('TraceService', () => {
         expect((await received).map((event) => event.seq)).toEqual([1, 2, 3]);
     });
 
+    it('keeps streaming when triage runs again after a completed run (NEED_INFO answered)', async () => {
+        const { repository, release } = fakeRepository();
+        const service = new TraceService(repository);
+        const firstRun = service.forClaim(claimId);
+        await firstRun.record('orchestrator', 'triage.started', 'Triage started');
+        await firstRun.record('orchestrator', 'triage.completed', 'Triage completed');
+        await firstRun.record('claimant', 'details.added', 'Claimant added the missing details');
+        release();
+
+        // Opened before the new run has recorded anything: must not close at the first run's completion.
+        const received = firstValueFrom(service.stream(claimId).pipe(toArray()));
+        await new Promise((resolve) => setImmediate(resolve));
+        const secondRun = service.forClaim(claimId, 3);
+        await secondRun.record('orchestrator', 'triage.started', 'Triage started');
+        await secondRun.record('orchestrator', 'triage.completed', 'Triage completed');
+
+        expect((await received).map((event) => event.seq)).toEqual([1, 2, 3, 4, 5]);
+    });
+
     it('ignores events of other claims', async () => {
         const { repository, release } = fakeRepository();
         const service = new TraceService(repository);

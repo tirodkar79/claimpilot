@@ -52,6 +52,16 @@ export function PolicyCard({ findings, policyId }: PolicyCardProps) {
                         ))}
                     </div>
 
+                    {!!findings.droppedExclusions?.length && (
+                        <p className={styles.grounding} role="status">
+                            <AlertTriangle size={14} strokeWidth={2} />
+                            Set aside{' '}
+                            {findings.droppedExclusions
+                                .map((e) => `§${e.clauseId} ${EXCLUSION_LABELS.get(e.type) ?? e.type}`)
+                                .join(', ')}
+                            : the claimed cause doesn't support it.
+                        </p>
+                    )}
                     {(findings.droppedCitations.length > 0 || findings.delayMeasureMismatch) && (
                         <p className={styles.grounding} role="status">
                             <AlertTriangle size={14} strokeWidth={2} />

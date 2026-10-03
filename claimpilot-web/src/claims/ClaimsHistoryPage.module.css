@@ -1,0 +1,170 @@
+.card {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    padding: 18px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: var(--radius-md);
+}
+
+.header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 12px;
+}
+
+.title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    font-size: 13px;
+    font-weight: 600;
+}
+
+.count {
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: var(--sunken);
+    color: var(--ink-2);
+    font-size: 11px;
+}
+
+.filter {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.filter input {
+    width: 180px;
+    height: 32px;
+    padding: 0 10px;
+    border: 1px solid var(--line-2);
+    border-radius: 9px;
+    background: var(--canvas);
+    color: var(--ink);
+    font: inherit;
+    font-family: var(--font-mono);
+    font-size: 12.5px;
+}
+
+.table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12.5px;
+}
+
+.table th {
+    padding: 0 8px 8px;
+    border-bottom: 1px solid var(--line);
+    color: var(--muted);
+    font-size: 10.5px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-align: left;
+    text-transform: uppercase;
+}
+
+.table td {
+    padding: 10px 8px;
+    border-bottom: 1px solid var(--line);
+}
+
+.table tbody tr {
+    cursor: pointer;
+}
+
+.table tbody tr:hover td {
+    background: var(--accent-soft);
+}
+
+.table a {
+    color: var(--accent);
+    text-decoration: none;
+}
+
+.num {
+    text-align: right !important;
+    font-variant-numeric: tabular-nums;
+}
+
+.mono {
+    font-family: var(--font-mono);
+}
+
+.pill {
+    padding: 2px 9px;
+    border-radius: 999px;
+    font-size: 11px;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.ok {
+    background: var(--ok-bg);
+    color: var(--ok);
+}
+
+.bad {
+    background: var(--bad-bg);
+    color: var(--bad);
+}
+
+.warn {
+    background: var(--warn-bg);
+    color: var(--warn);
+}
+
+.info {
+    background: var(--info-bg);
+    color: var(--info);
+}
+
+.neutral {
+    background: var(--sunken);
+    color: var(--ink-2);
+}
+
+.pager {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 10px;
+    color: var(--muted);
+    font-size: 12px;
+}
+
+.pager button {
+    height: 30px;
+    padding: 0 12px;
+    border: 1px solid var(--line-2);
+    border-radius: 8px;
+    background: var(--surface);
+    color: var(--ink);
+    font: inherit;
+    font-weight: 600;
+}
+
+.pager button:disabled {
+    opacity: 0.5;
+}
+
+.muted {
+    color: var(--muted);
+}
+
+.error {
+    color: var(--bad);
+}
+
+@media (max-width: 760px) {
+    .table th:nth-child(4),
+    .table td:nth-child(4) {
+        display: none;
+    }
+}

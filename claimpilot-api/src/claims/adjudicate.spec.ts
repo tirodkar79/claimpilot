@@ -27,6 +27,7 @@ const noExclusions: PolicyFindings = {
     summary: '',
     citedClauses: [],
     droppedCitations: [],
+    droppedExclusions: [],
 };
 
 /**

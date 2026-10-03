@@ -1,4 +1,4 @@
-import { BarChart3, Inbox, Plus, ShieldCheck } from 'lucide-react';
+import { BarChart3, History, Inbox, Plus, ShieldCheck } from 'lucide-react';
 import { NavLink } from 'react-router';
 import { roleStore } from '../auth/role.store';
 import { ApiStatus } from '../health/ApiStatus';
@@ -23,6 +23,10 @@ export function Sidebar() {
                 <NavLink to="/" end className={styles.navItem}>
                     <Plus size={16} strokeWidth={1.8} />
                     New claim
+                </NavLink>
+                <NavLink to="/claims" className={styles.navItem}>
+                    <History size={16} strokeWidth={1.8} />
+                    Claims
                 </NavLink>
                 {role === 'reviewer' && (
                     <>
