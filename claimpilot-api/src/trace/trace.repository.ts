@@ -17,4 +17,18 @@ export class TraceRepository extends MongoRepository<TraceEvent> {
     findByClaim(claimId: string): Promise<TraceEvent[]> {
         return this.find({ claimId: new Types.ObjectId(claimId) }, { seq: 1 });
     }
+
+    /**
+     * Highest sequence number recorded for a claim, or 0 when it has no events.
+     * @param claimId Claim id.
+     */
+    async lastSeq(claimId: string): Promise<number> {
+        const [last] = await this.model
+            .find({ claimId: new Types.ObjectId(claimId) })
+            .sort({ seq: -1 })
+            .limit(1)
+            .lean()
+            .exec();
+        return last?.seq ?? 0;
+    }
 }

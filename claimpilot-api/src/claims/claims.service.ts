@@ -2,7 +2,7 @@ import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { ClaimFacts } from './claim-facts';
 import type { Claim, ClaimEvidence } from './claim.schema';
 import { ClaimTriageService } from './claim-triage.service';
-import type { ClaimOutcome, ClaimStatus } from './claims.constants';
+import type { ClaimOutcome, ClaimReview, ClaimStatus } from './claims.constants';
 import { ClaimsRepository } from './claims.repository';
 import type { CreateClaimDto } from './create-claim.dto';
 
@@ -18,6 +18,7 @@ export interface ClaimView {
     outcome?: ClaimOutcome;
     evidence?: ClaimEvidence;
     summary?: string;
+    review?: ClaimReview;
     createdAt: string;
 }
 
@@ -71,6 +72,7 @@ function toView(claim: Claim): ClaimView {
         outcome: claim.outcome,
         evidence: claim.evidence,
         summary: claim.summary,
+        review: claim.review,
         createdAt: claim.createdAt.toISOString(),
     };
 }

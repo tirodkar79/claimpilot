@@ -112,7 +112,12 @@ POST /claims ─► Intake ─► completeness ─► Orchestrator ─┬─► 
    | Otherwise | **APPROVE** the tier the record reaches, which may be lower than claimed |
 
    Any agent failure → REFER to a human.
-10. Every step is a trace event. `GET /claims/:id/events` streams them; `GET /claims/:id` returns facts,
+10. **Human review.** Every REFER lands in a review queue (`GET /reviews`, reviewer role only, oldest first)
+    with the referral reasons, integrity flags, recorded delay and the payout approval would give. A reviewer
+    records APPROVE (at one of the policy's tiers), REJECT or NEED_INFO with a required note
+    (`POST /reviews/:claimId/decision`). The triage outcome is kept unchanged for the audit trail; the review
+    holds the final say, and the decision is appended to the trace. A claim can only be decided once.
+11. Every step is a trace event. `GET /claims/:id/events` streams them; `GET /claims/:id` returns facts,
    evidence, the outcome with cited clauses and payout, and the orchestrator's summary.
 
 ### Demo data (fictional)

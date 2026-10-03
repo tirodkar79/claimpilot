@@ -4,6 +4,7 @@ import { FlightCard } from './triage/FlightCard';
 import { IntegrityCard } from './triage/IntegrityCard';
 import { OutcomeCard } from './triage/OutcomeCard';
 import { PolicyCard } from './triage/PolicyCard';
+import { ReviewCard } from './triage/ReviewCard';
 import { TraceLog } from './triage/TraceLog';
 import { WeatherCard } from './triage/WeatherCard';
 import { useClaim } from './use-claim';
@@ -52,6 +53,7 @@ export function ClaimTriagePage() {
                 )}
                 {claim.data?.evidence?.integrity && <IntegrityCard findings={claim.data.evidence.integrity} />}
                 <OutcomeCard outcome={claim.data?.outcome} summary={claim.data?.summary} />
+                {claim.data?.review && <ReviewCard review={claim.data.review} />}
             </div>
             <TraceLog events={stream.events} status={stream.status} error={stream.error} />
         </div>

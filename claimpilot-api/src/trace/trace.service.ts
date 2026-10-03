@@ -46,9 +46,10 @@ export class TraceService {
     /**
      * Returns a recorder for one triage run. Single-process: sequence numbers are kept in memory.
      * @param claimId Claim being triaged.
+     * @param startAfterSeq Last sequence number already stored (0 for a new claim).
      */
-    forClaim(claimId: string): TraceRecorder {
-        let seq = 0;
+    forClaim(claimId: string, startAfterSeq = 0): TraceRecorder {
+        let seq = startAfterSeq;
         return {
             record: async (actor, type, message, extra = {}) => {
                 seq += 1;
@@ -69,33 +70,58 @@ export class TraceService {
     }
 
     /**
-     * Streams a claim's events: stored history first, then live events, completing after the
-     * terminal event. Live events are buffered while history loads and de-duplicated by `seq`.
+     * Appends one event to a claim whose triage already finished (e.g. a reviewer's decision).
+     * @param claimId Claim id.
+     * @param actor Who produced the event.
+     * @param type Event type.
+     * @param message Human-readable summary.
+     * @param extra Optional structured data.
+     */
+    async append(
+        claimId: string,
+        actor: TraceActor,
+        type: TraceEventType,
+        message: string,
+        extra?: { data?: Record<string, unknown> },
+    ): Promise<TraceEventView> {
+        const last = await this.repository.lastSeq(claimId);
+        return this.forClaim(claimId, last).record(actor, type, message, extra);
+    }
+
+    /**
+     * Streams a claim's events: the full stored history first (including later events such as a review), then
+     * live events until triage completes. Live events are buffered while history loads and de-duplicated by `seq`.
      * @param claimId Claim id.
      */
     stream(claimId: string): Observable<TraceEventView> {
         return new Observable<TraceEventView>((subscriber) => {
             let lastSeq = 0;
             let historyLoaded = false;
+            let triageFinished = false;
             const buffered: TraceEventView[] = [];
 
+            /** Emits an event once, in order; remembers whether triage has finished. */
             const emit = (event: TraceEventView) => {
                 if (event.seq <= lastSeq) return;
                 lastSeq = event.seq;
                 subscriber.next(event);
-                if (event.type === TERMINAL_TRACE_EVENT) subscriber.complete();
+                if (event.type === TERMINAL_TRACE_EVENT) triageFinished = true;
             };
 
-            const live = this.live$
-                .pipe(filter((event) => event.claimId === claimId))
-                .subscribe((event) => (historyLoaded ? emit(event) : buffered.push(event)));
+            const live = this.live$.pipe(filter((event) => event.claimId === claimId)).subscribe((event) => {
+                if (!historyLoaded) return void buffered.push(event);
+                emit(event);
+                if (triageFinished) subscriber.complete();
+            });
 
             this.repository
                 .findByClaim(claimId)
                 .then((history) => {
+                    // Replay everything, including events after triage (e.g. a review), then close if triage is over.
                     history.map(toView).forEach(emit);
                     buffered.forEach(emit);
                     historyLoaded = true;
+                    if (triageFinished) subscriber.complete();
                 })
                 .catch((error: unknown) => subscriber.error(error));
 

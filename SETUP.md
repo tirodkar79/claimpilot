@@ -288,6 +288,8 @@ Check, in order:
 6. Other examples: **Short delay** → Rejected, **Arrival-measured** → Approved INR 6,000, **Late purchase** →
    Referred (§7.1), **Wrong booking** → Referred, **Unknown flight** → Need info, **Missing details** → Need info.
 7. Submit **Delay payout** a second time: the duplicate is **Rejected** because the first one was already paid.
+8. Switch the top bar to **Reviewer**: **Review queue** appears in the sidebar with every referred claim. Pick
+   one, choose a decision (and payout tier), add a note and record it. The claim page then shows the review.
 
 If step 4 ends in **Referred**, the model call failed; the API terminal shows why (usually a bad key or a rate
 limit, see below).

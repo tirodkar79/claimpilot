@@ -341,6 +341,64 @@ describe('Claims API', () => {
         expect(claim.evidence.integrity.flags[0].code).toBe('late_purchase');
     });
 
+    it('puts a referral in the review queue, where only a reviewer can decide it, once', async () => {
+        intakeReply = {
+            flightNumber: '6E-2134',
+            flightDate: recentFlightDate,
+            origin: 'BOM',
+            destination: 'DEL',
+            claimedDelayMinutes: 240,
+            claimedCause: 'technical fault',
+        };
+        policyReply = noExclusions;
+        const referredClaim = await submitAndWait({
+            customerId: 'C-3001',
+            policyId: 'P-60',
+            bookingRef: 'LT3001',
+            message: body.message,
+        });
+        expect(referredClaim.review).toEqual({ status: 'pending' });
+
+        await request(app.getHttpServer()).get('/reviews').set(CLAIMANT).expect(403);
+        const queue = await request(app.getHttpServer()).get('/reviews').set(REVIEWER).expect(200);
+        expect(queue.body).toMatchObject({
+            total: 1,
+            items: [
+                { claimId: referredClaim.id, integrityFlags: ['late_purchase'], qualifyingPayout: { amount: 2000 } },
+            ],
+        });
+
+        const decide = (decision: Record<string, unknown>) =>
+            request(app.getHttpServer()).post(`/reviews/${referredClaim.id}/decision`).set(REVIEWER).send(decision);
+        await decide({ decision: 'APPROVE', note: 'Renewal', payoutAmount: 1234 }).expect(400);
+        const decided = await decide({
+            decision: 'APPROVE',
+            note: 'Policy was a renewal bought late by mistake.',
+        }).expect(201);
+        expect(decided.body.review).toMatchObject({
+            status: 'resolved',
+            decision: 'APPROVE',
+            payout: { amount: 2000 },
+        });
+        await decide({ decision: 'REJECT', note: 'Second opinion.' }).expect(409);
+
+        const claim = await request(app.getHttpServer()).get(`/claims/${referredClaim.id}`).set(CLAIMANT);
+        expect(claim.body.outcome.decision).toBe('REFER'); // triage outcome kept for the audit trail
+        expect(claim.body.review.decision).toBe('APPROVE');
+        expect((await streamedEvents(referredClaim.id)).at(-1)).toBe('reviewer:review.decided');
+
+        const pending = await request(app.getHttpServer()).get('/reviews').set(REVIEWER);
+        expect(pending.body.total).toBe(0);
+    });
+
+    it('does not queue claims that were not referred', async () => {
+        await request(app.getHttpServer())
+            .post(`/reviews/000000000000000000000000/decision`)
+            .set(REVIEWER)
+            .send({ decision: 'REJECT', note: 'Nothing here' })
+            .expect(404);
+    });
+
     it('returns 404 for unknown or malformed claim ids', async () => {
         await request(app.getHttpServer()).get('/claims/000000000000000000000000').set(CLAIMANT).expect(404);
         await request(app.getHttpServer()).get('/claims/not-an-id/events').set(CLAIMANT).expect(404);

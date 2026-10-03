@@ -5,7 +5,7 @@ import type { PolicyFindings } from '../agents/policy.agent';
 import type { WeatherFindings } from '../agents/weather.agent';
 import type { IntegrityFindings } from '../integrity/integrity.service';
 import type { ClaimFacts } from './claim-facts';
-import { CLAIM_STATUSES, type ClaimOutcome, type ClaimStatus } from './claims.constants';
+import { CLAIM_STATUSES, type ClaimOutcome, type ClaimReview, type ClaimStatus } from './claims.constants';
 
 export interface ClaimEvidence {
     policy?: PolicyFindings;
@@ -47,6 +47,10 @@ export class Claim {
     /** Orchestrator's summary for the reviewer. Informational only; never used to decide. */
     @Prop()
     summary?: string;
+
+    /** Present once the claim is referred: pending until a reviewer decides. */
+    @Prop({ type: Object })
+    review?: ClaimReview;
 
     createdAt: Date;
     updatedAt: Date;

@@ -102,6 +102,14 @@ export interface PolicyFindings {
     delayMeasureMismatch: boolean;
 }
 
+export interface ClaimReview {
+    status: 'pending' | 'resolved';
+    decision?: 'APPROVE' | 'REJECT' | 'NEED_INFO';
+    payout?: { amount: number; currency: string };
+    note?: string;
+    decidedAt?: string;
+}
+
 export interface Claim {
     id: string;
     customerId: string;
@@ -119,6 +127,7 @@ export interface Claim {
     };
     /** Orchestrator's summary for the reviewer; informational only. */
     summary?: string;
+    review?: ClaimReview;
     createdAt: string;
 }
 

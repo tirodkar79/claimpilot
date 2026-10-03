@@ -10,6 +10,7 @@ import { HealthModule } from './health/health.module';
 import { HttpClientModule } from './http-client/http-client.module';
 import { MongoModule } from './mongo/mongo.module';
 import { RequestContextModule } from './request-context/request-context.module';
+import { ReviewsModule } from './reviews/reviews.module';
 
 @Module({
     imports: [
@@ -20,6 +21,7 @@ import { RequestContextModule } from './request-context/request-context.module';
         AuthModule,
         HealthModule,
         ClaimsModule,
+        ReviewsModule,
     ],
     providers: [
         { provide: APP_INTERCEPTOR, useClass: LoggingInterceptor },

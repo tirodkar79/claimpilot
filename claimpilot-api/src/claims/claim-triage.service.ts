@@ -102,7 +102,11 @@ export class ClaimTriageService {
         }
 
         await recorder.record('orchestrator', 'decision', outcome.decision, { data: { outcome } });
-        await this.claims.updateById(claimId, { outcome, status: 'completed' });
+        await this.claims.updateById(claimId, {
+            outcome,
+            status: 'completed',
+            ...(outcome.decision === 'REFER' && { review: { status: 'pending' } }),
+        });
         await recorder.record('orchestrator', 'triage.completed', 'Triage completed');
         return outcome;
     }

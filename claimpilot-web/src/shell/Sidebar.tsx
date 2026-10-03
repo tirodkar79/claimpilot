@@ -1,10 +1,13 @@
-import { Plus, ShieldCheck } from 'lucide-react';
+import { Inbox, Plus, ShieldCheck } from 'lucide-react';
 import { NavLink } from 'react-router';
+import { roleStore } from '../auth/role.store';
 import { ApiStatus } from '../health/ApiStatus';
+import { usePersistedStore } from '../lib/persisted-store';
 import styles from './AppShell.module.css';
 
-/** Brand, navigation and system status. Navigation grows as features ship. */
+/** Brand, navigation and system status. The review queue appears for reviewers only. */
 export function Sidebar() {
+    const [role] = usePersistedStore(roleStore);
     return (
         <aside className={styles.sidebar}>
             <div className={styles.logo}>
@@ -21,6 +24,12 @@ export function Sidebar() {
                     <Plus size={16} strokeWidth={1.8} />
                     New claim
                 </NavLink>
+                {role === 'reviewer' && (
+                    <NavLink to="/reviews" className={styles.navItem}>
+                        <Inbox size={16} strokeWidth={1.8} />
+                        Review queue
+                    </NavLink>
+                )}
             </nav>
 
             <footer className={styles.sidebarFooter}>
